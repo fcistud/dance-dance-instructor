@@ -78,10 +78,14 @@ const el = {
   targetStatus: document.getElementById("targetStatus"),
   userStatus: document.getElementById("userStatus"),
   speedControl: document.getElementById("speedControl"),
+  targetVolume: document.getElementById("targetVolume"),
+  targetMute: document.getElementById("targetMute"),
   userSourceSelect: document.getElementById("userSourceSelect"),
   userUploadWrap: document.getElementById("userUploadWrap"),
   mirrorMode: document.getElementById("mirrorMode"),
   audioCoach: document.getElementById("audioCoach"),
+  coachMute: document.getElementById("coachMute"),
+  coachVolume: document.getElementById("coachVolume"),
   voiceMode: document.getElementById("voiceMode"),
   startBtn: document.getElementById("startBtn"),
   pauseBtn: document.getElementById("pauseBtn"),
@@ -106,7 +110,9 @@ const el = {
   replayScrubber: document.getElementById("replayScrubber"),
   replayTimeLabel: document.getElementById("replayTimeLabel"),
   levelValue: document.getElementById("levelValue"),
+  levelMeta: document.getElementById("levelMeta"),
   xpValue: document.getElementById("xpValue"),
+  xpMeta: document.getElementById("xpMeta"),
   comboValue: document.getElementById("comboValue"),
   nemotronBtn: document.getElementById("nemotronBtn"),
   nemotronMode: document.getElementById("nemotronMode"),
@@ -154,6 +160,10 @@ const state = {
   level: 1,
   combo: 0,
   bestCombo: 0,
+  targetVolume: 0.75,
+  targetMuted: false,
+  coachVolume: 0.72,
+  coachMuted: false,
   badges: [],
   replaySyncTimer: 0,
   semanticSamples: [],
@@ -181,8 +191,11 @@ const PERFECT_HIT_THRESHOLD = 88;
 const MIN_LANDMARK_VISIBILITY = 0.24;
 const MIN_TARGET_COVERAGE = 0.34;
 const MIN_USER_COVERAGE = 0.3;
+const XP_BASE_LEVEL_COST = 100;
+const XP_LEVEL_STEP = 55;
 const CHART_PAD = { left: 42, right: 18, top: 18, bottom: 34 };
 const LOCAL_LEADERBOARD_KEY = "improveai.leaderboard.v1";
+const AUDIO_SETTINGS_KEY = "improveai.audio.v1";
 
 function initPartTotals() {
   return Object.keys(PARTS).reduce((acc, key) => {
@@ -196,6 +209,8 @@ function init() {
   el.proxyBaseUrl.value = suggestDefaultProxyBase();
   handleNemotronModeChange();
   setNemotronOutput("AI-enhanced feedback will appear here.");
+  hydrateAudioSettings();
+  updateGamificationHud();
   hydrateLeaderboardName();
   bindEvents();
   prepareCanvases();
@@ -218,6 +233,11 @@ function bindEvents() {
   el.speedControl.addEventListener("change", handleSpeedChange);
   el.userSourceSelect.addEventListener("change", handleUserSourceChange);
   el.mirrorMode.addEventListener("change", applyMirrorMode);
+  el.targetVolume.addEventListener("input", handleTargetAudioControlChange);
+  el.targetMute.addEventListener("change", handleTargetAudioControlChange);
+  el.coachVolume.addEventListener("input", handleCoachAudioControlChange);
+  el.coachMute.addEventListener("change", handleCoachAudioControlChange);
+  el.audioCoach.addEventListener("change", handleCoachAudioControlChange);
   el.startBtn.addEventListener("click", startSession);
   el.pauseBtn.addEventListener("click", togglePause);
   el.endBtn.addEventListener("click", () => endSession("Manually ended"));
@@ -239,11 +259,13 @@ function bindEvents() {
     }
   });
   el.targetVideo.addEventListener("loadedmetadata", prepareCanvases);
+  el.targetVideo.addEventListener("loadedmetadata", applyTargetAudioSettings);
   el.userVideo.addEventListener("loadedmetadata", prepareCanvases);
   el.replayTarget.addEventListener("ended", stopReplaySync);
   el.replayTarget.addEventListener("timeupdate", handleReplayTargetTimeUpdate);
   el.replayTarget.addEventListener("seeked", handleReplayTargetSeeked);
   el.replayTarget.addEventListener("loadedmetadata", updateReplayControls);
+  el.replayTarget.addEventListener("loadedmetadata", applyTargetAudioSettings);
   el.replayUser.addEventListener("seeked", handleReplayUserSeeked);
   el.replayUser.addEventListener("timeupdate", handleReplayUserTimeUpdate);
   el.replayUser.addEventListener("loadedmetadata", updateReplayControls);
@@ -275,6 +297,82 @@ function persistLeaderboardName() {
   el.leaderboardName.value = name;
   if (name) {
     window.localStorage.setItem("improveai.playerName", name);
+  }
+}
+
+function hydrateAudioSettings() {
+  try {
+    const raw = window.localStorage.getItem(AUDIO_SETTINGS_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (Number.isFinite(Number(saved.targetVolume))) {
+        state.targetVolume = clamp(Number(saved.targetVolume), 0, 1);
+      }
+      state.targetMuted = Boolean(saved.targetMuted);
+      if (Number.isFinite(Number(saved.coachVolume))) {
+        state.coachVolume = clamp(Number(saved.coachVolume), 0, 1);
+      }
+      state.coachMuted = Boolean(saved.coachMuted);
+      if (typeof saved.audioCoachEnabled === "boolean") {
+        el.audioCoach.checked = saved.audioCoachEnabled;
+      }
+    }
+  } catch {
+    // keep defaults
+  }
+
+  el.targetVolume.value = String(Math.round(state.targetVolume * 100));
+  el.targetMute.checked = state.targetMuted;
+  el.coachVolume.value = String(Math.round(state.coachVolume * 100));
+  el.coachMute.checked = state.coachMuted;
+  applyTargetAudioSettings();
+  applyCoachAudioSettings();
+}
+
+function persistAudioSettings() {
+  const payload = {
+    targetVolume: state.targetVolume,
+    targetMuted: state.targetMuted,
+    coachVolume: state.coachVolume,
+    coachMuted: state.coachMuted,
+    audioCoachEnabled: el.audioCoach.checked
+  };
+  window.localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(payload));
+}
+
+function parseSliderVolume(inputEl, fallback = 0.75) {
+  const parsed = Number(inputEl?.value);
+  const value = Number.isFinite(parsed) ? parsed : Math.round(fallback * 100);
+  return clamp(value / 100, 0, 1);
+}
+
+function handleTargetAudioControlChange() {
+  state.targetVolume = parseSliderVolume(el.targetVolume, state.targetVolume);
+  state.targetMuted = el.targetMute.checked;
+  applyTargetAudioSettings();
+  persistAudioSettings();
+}
+
+function applyTargetAudioSettings() {
+  const volume = state.targetMuted ? 0 : state.targetVolume;
+  el.targetVideo.volume = volume;
+  el.targetVideo.muted = state.targetMuted;
+  el.replayTarget.volume = volume;
+  el.replayTarget.muted = state.targetMuted;
+}
+
+function handleCoachAudioControlChange() {
+  state.coachVolume = parseSliderVolume(el.coachVolume, state.coachVolume);
+  state.coachMuted = el.coachMute.checked;
+  applyCoachAudioSettings();
+  persistAudioSettings();
+}
+
+function applyCoachAudioSettings() {
+  if (!el.audioCoach.checked || state.coachMuted || state.coachVolume <= 0.01) {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
   }
 }
 
@@ -563,6 +661,7 @@ async function handleTargetUpload(event) {
   state.targetUrl = URL.createObjectURL(file);
   el.targetVideo.src = state.targetUrl;
   el.targetVideo.load();
+  applyTargetAudioSettings();
   await el.targetVideo.play().catch(() => {});
   el.targetVideo.pause();
   setStatus(el.targetStatus, `Loaded: ${trimName(file.name)}`, "ok");
@@ -740,6 +839,7 @@ function resetSessionData() {
   el.movementDescriptors.innerHTML = "";
   el.submitScoreBtn.disabled = true;
   el.leaderboardStatus.textContent = "Session in progress. Finish to submit your score.";
+  updateGamificationHud();
 }
 
 function startRecordingIfNeeded() {
@@ -1648,22 +1748,25 @@ function shouldEmitCoachUpdate(tipKey, timeSec, urgent) {
 }
 
 function scoreGamification(overall) {
-  state.xp += Math.max(2, Math.round(overall / 12));
-  state.level = 1 + Math.floor(state.xp / 240);
+  const frameXp =
+    0.08 +
+    (overall / 100) * 0.2 +
+    (overall >= 90 ? 0.24 : overall >= 80 ? 0.12 : 0) +
+    Math.min(0.28, state.combo * 0.015);
+  state.xp += frameXp;
+
   if (overall >= PERFECT_HIT_THRESHOLD) {
     state.perfectHits += 1;
   }
 
-  if (overall >= 80) {
+  if (overall >= 82) {
     state.combo += 1;
   } else {
     state.combo = Math.max(0, state.combo - 1);
   }
 
   state.bestCombo = Math.max(state.bestCombo, state.combo);
-  el.levelValue.textContent = String(state.level);
-  el.xpValue.textContent = String(state.xp);
-  el.comboValue.textContent = state.combo >= 6 ? `x${state.combo} Chain` : `x${state.combo}`;
+  updateGamificationHud();
 
   const milestone = [5, 10, 20].find((value) => value === state.combo);
   if (milestone && !state.comboMilestonesSeen.has(milestone)) {
@@ -1672,19 +1775,74 @@ function scoreGamification(overall) {
   }
 }
 
+function levelProgressFromXp(totalXp) {
+  const xp = Math.max(0, totalXp);
+  let level = 1;
+  let consumed = 0;
+  while (true) {
+    const cost = XP_BASE_LEVEL_COST + (level - 1) * XP_LEVEL_STEP;
+    if (xp < consumed + cost) {
+      const intoLevel = xp - consumed;
+      return {
+        level,
+        levelCost: cost,
+        intoLevel,
+        toNext: Math.ceil(cost - intoLevel),
+        levelStart: consumed,
+        nextLevelXp: consumed + cost
+      };
+    }
+    consumed += cost;
+    level += 1;
+  }
+}
+
+function levelTitle(level) {
+  if (level >= 12) {
+    return "Virtuoso";
+  }
+  if (level >= 9) {
+    return "Performer";
+  }
+  if (level >= 6) {
+    return "Choreographer";
+  }
+  if (level >= 3) {
+    return "Rhythm Builder";
+  }
+  return "Rookie";
+}
+
+function updateGamificationHud() {
+  const xp = Math.round(state.xp);
+  const progress = levelProgressFromXp(state.xp);
+  state.level = progress.level;
+
+  el.levelValue.textContent = String(progress.level);
+  el.levelMeta.textContent = `${Math.round(progress.intoLevel)}/${progress.levelCost} XP`;
+  el.xpValue.textContent = String(xp);
+  el.xpMeta.textContent = `${progress.toNext} to L${progress.level + 1} · ${levelTitle(progress.level)}`;
+  el.comboValue.textContent = state.combo >= 6 ? `x${state.combo} Chain` : `x${state.combo}`;
+}
+
 function maybeSpeakTip(tip, meta = {}) {
   if (!tip || tip === state.latestTip) {
     return;
   }
   state.latestTip = tip;
-  if (!el.audioCoach.checked || !("speechSynthesis" in window)) {
+  if (
+    !el.audioCoach.checked ||
+    state.coachMuted ||
+    state.coachVolume <= 0.01 ||
+    !("speechSynthesis" in window)
+  ) {
     return;
   }
 
   const now = performance.now();
   const mode = el.voiceMode.value;
   const minInterval =
-    mode === "calm" ? 9200 : mode === "active" ? 6200 : 4800;
+    mode === "calm" ? 10800 : mode === "active" ? 7600 : 6200;
   const highPriority =
     Boolean(meta.urgent) ||
     (meta.overall ?? 100) < 55 ||
@@ -1703,9 +1861,9 @@ function maybeSpeakTip(tip, meta = {}) {
   if (voice) {
     utterance.voice = voice;
   }
-  utterance.rate = mode === "hype" ? 1.02 : 0.94;
-  utterance.pitch = mode === "hype" ? 1.07 : 1;
-  utterance.volume = 0.86;
+  utterance.rate = mode === "hype" ? 0.99 : 0.92;
+  utterance.pitch = mode === "hype" ? 1.04 : 0.98;
+  utterance.volume = clamp(state.coachVolume, 0, 1);
 
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
@@ -1731,7 +1889,17 @@ function buildVoiceLine(tip, mode, meta) {
 
   const pool = mode === "hype" ? hypeOpeners : mode === "active" ? activeOpeners : calmOpeners;
   const opener = pool[(Math.floor((meta.overall ?? 0) + state.combo) % pool.length)];
-  return `${opener} ${tip}`.replace(/\s+/g, " ").trim();
+  const shortTip = shortenVoiceTip(tip);
+  return `${opener} ${shortTip}`.replace(/\s+/g, " ").trim();
+}
+
+function shortenVoiceTip(tip) {
+  const normalized = String(tip || "")
+    .replace(/Timing is \d+ms (late|early)\.?/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const firstSentence = normalized.split(/[.!?]/)[0]?.trim() || normalized;
+  return firstSentence.slice(0, 130);
 }
 
 function chooseCoachVoice() {
@@ -2122,6 +2290,7 @@ function prepareReplaySources() {
     el.replayUser.src = state.webcamRecordingUrl;
   }
 
+  applyTargetAudioSettings();
   el.replayTarget.playbackRate = Number(el.speedControl.value);
   el.replayUser.playbackRate = Number(el.speedControl.value);
   updateReplayControls();
