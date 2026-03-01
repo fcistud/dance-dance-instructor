@@ -151,6 +151,7 @@ const el = {
 const state = {
   poseLandmarkerTarget: null,
   poseLandmarkerUser: null,
+  poseInitPromise: null,
   poseTimestampMs: {
     target: 0,
     user: 0
@@ -241,16 +242,27 @@ function init() {
   bindEvents();
   prepareCanvases();
   refreshLeaderboard();
-  initializePose().catch((error) => {
-    console.error(error);
-    setStatus(el.targetStatus, "Pose model error", "error");
-    logCoach("Pose model failed to load. Refresh and retry.", true);
-  });
+  warmPoseModelInBackground();
   startWebcam().catch((error) => {
     console.error(error);
     setStatus(el.userStatus, "Webcam blocked", "error");
     logCoach("Webcam access denied. Switch to upload mode.", true);
   });
+}
+
+function warmPoseModelInBackground() {
+  if ((state.poseLandmarkerTarget && state.poseLandmarkerUser) || state.poseInitPromise) {
+    return;
+  }
+  state.poseInitPromise = initializePose()
+    .catch((error) => {
+      console.error(error);
+      setStatus(el.targetStatus, "Pose model error", "error");
+      logCoach("Pose model failed to load. Refresh and retry.", true);
+    })
+    .finally(() => {
+      state.poseInitPromise = null;
+    });
 }
 
 function bindEvents() {
@@ -737,8 +749,7 @@ async function handleTargetUpload(event) {
   el.targetVideo.src = state.targetUrl;
   el.targetVideo.load();
   applyTargetAudioSettings();
-  await el.targetVideo.play().catch(() => {});
-  el.targetVideo.pause();
+  el.targetVideo.currentTime = 0;
   setStatus(el.targetStatus, `Loaded: ${trimName(file.name)}`, "ok");
   prepareCanvases();
 }
@@ -757,8 +768,7 @@ async function handleUserUpload(event) {
   el.userVideo.srcObject = null;
   el.userVideo.src = state.userUrl;
   el.userVideo.load();
-  await el.userVideo.play().catch(() => {});
-  el.userVideo.pause();
+  el.userVideo.currentTime = 0;
   setStatus(el.userStatus, `Loaded: ${trimName(file.name)}`, "ok");
   prepareCanvases();
 }
@@ -798,21 +808,33 @@ async function startWebcam() {
     return;
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 30, max: 60 }
-    },
-    audio: false
-  });
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 60 }
+      },
+      audio: false
+    });
+  } catch (primaryError) {
+    console.warn("Primary webcam constraints failed, retrying with fallback.", primaryError);
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false
+    });
+  }
 
   state.userStream = stream;
   el.userVideo.srcObject = stream;
-  await el.userVideo.play();
+  await safePlayVideo(el.userVideo, "webcam");
   setStatus(el.userStatus, "Webcam ready", "ok");
   applyMirrorMode();
   prepareCanvases();
+  if (state.sessionActive) {
+    startRecordingIfNeeded();
+  }
 }
 
 function stopWebcam() {
@@ -830,11 +852,6 @@ function applyMirrorMode() {
 }
 
 async function startSession() {
-  if (!state.poseLandmarkerTarget || !state.poseLandmarkerUser) {
-    logCoach("Pose model still loading.", true);
-    return;
-  }
-
   if (!state.targetUrl) {
     logCoach("Upload a target dance video first.", true);
     return;
@@ -845,19 +862,11 @@ async function startSession() {
     return;
   }
 
-  if (state.userSource === "webcam" && !state.userStream) {
-    await startWebcam().catch(() => {
-      logCoach("Webcam unavailable. Use upload mode.", true);
-    });
-    if (!state.userStream) {
-      return;
-    }
-  }
-
   resetSessionData();
   state.sessionActive = true;
   state.paused = false;
   state.startTimestamp = performance.now();
+  warmPoseModelInBackground();
 
   el.startBtn.disabled = true;
   el.pauseBtn.disabled = false;
@@ -867,17 +876,41 @@ async function startSession() {
   el.leaderboardShell?.classList.add("hidden");
   el.sessionSummary.textContent = "Session in progress";
 
-  el.targetVideo.currentTime = 0;
-  await el.targetVideo.play().catch(() => {});
+  const targetPlaybackStarted = await safePlayVideo(el.targetVideo, "reference");
+  if (!targetPlaybackStarted) {
+    logCoach("Reference video blocked. Click the video once, then press Start again.", true);
+  }
 
   if (state.userSource === "upload") {
-    el.userVideo.currentTime = 0;
-    await el.userVideo.play().catch(() => {});
+    const userPlaybackStarted = await safePlayVideo(el.userVideo, "uploaded video");
+    if (!userPlaybackStarted) {
+      logCoach("Practice video blocked. Click the video once, then press Start again.", true);
+    }
+  } else if (!state.userStream) {
+    startWebcam().catch(() => {
+      logCoach("Webcam unavailable. Allow camera access or switch to upload mode.", true);
+    });
   }
 
   startRecordingIfNeeded();
   logCoach("Session started. Match timing, shape, and range.", false);
   runLoop();
+}
+
+async function safePlayVideo(videoEl, label) {
+  if (!videoEl) {
+    return false;
+  }
+  try {
+    if (!videoEl.srcObject && Number.isFinite(videoEl.currentTime)) {
+      videoEl.currentTime = 0;
+    }
+    await videoEl.play();
+    return true;
+  } catch (error) {
+    console.warn(`Unable to start ${label} playback.`, error);
+    return false;
+  }
 }
 
 function resetSessionData() {
