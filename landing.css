@@ -34,7 +34,7 @@ body {
 
 .landing-shell {
   width: min(1260px, 95vw);
-  margin: 1rem auto 2.5rem;
+  margin: 1rem auto 1.2rem;
   display: grid;
   gap: 1rem;
   position: relative;
@@ -140,6 +140,26 @@ a {
   flex-wrap: wrap;
 }
 
+.fun-badges {
+  margin-top: 0.75rem;
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.fun-badges span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  border: 1px dashed rgba(173, 215, 239, 0.45);
+  background: rgba(7, 20, 31, 0.56);
+  color: #d7ecf7;
+  font-family: "Space Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+}
+
 .large {
   padding: 0.62rem 1.1rem;
   font-size: 0.95rem;
@@ -239,6 +259,23 @@ a {
   border: 1px solid rgba(173, 215, 239, 0.24);
   background: rgba(8, 20, 32, 0.72);
   padding: 0.88rem;
+  transition: transform 0.2s ease;
+}
+
+.feature-tile.tilt-left {
+  transform: rotate(-1deg);
+}
+
+.feature-tile.tilt-right {
+  transform: rotate(1.1deg);
+}
+
+.feature-tile.tilt-left-soft {
+  transform: rotate(-0.65deg);
+}
+
+.feature-tile:hover {
+  transform: translateY(-3px) rotate(0deg);
 }
 
 .features h3 {
@@ -253,6 +290,15 @@ a {
   line-height: 1.5;
 }
 
+.footer-riff {
+  margin: 0.15rem 0 0;
+  text-align: center;
+  color: rgba(220, 240, 252, 0.8);
+  font-family: "Space Mono", monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+}
+
 @media (max-width: 1050px) {
   .hero,
   .stats-row,
@@ -261,7 +307,7 @@ a {
   }
 
   .dance-scene {
-    min-height: 340px;
+    min-height: 300px;
   }
 }
 

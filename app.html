@@ -48,7 +48,7 @@
         </div>
       </header>
 
-      <section class="panel-grid inputs-grid">
+      <section class="panel-grid inputs-grid session-live-block">
         <article class="panel video-panel">
           <div class="panel-head">
             <h2>Reference Dancer</h2>
@@ -136,7 +136,7 @@
         </article>
       </section>
 
-      <section class="panel controls-panel">
+      <section class="panel controls-panel session-live-block">
         <div class="session-controls">
           <button id="startBtn" class="btn-primary">Start Session</button>
           <button id="pauseBtn" class="btn-ghost" disabled>Pause</button>
@@ -182,7 +182,7 @@
         </article>
       </section>
 
-      <section class="panel-grid feedback-grid">
+      <section class="panel-grid feedback-grid session-live-block">
         <article class="panel">
           <div class="panel-head">
             <h2>Body Part Accuracy</h2>
@@ -202,6 +202,33 @@
           <h2>Session Analytics</h2>
           <span class="status-chip" id="sessionSummary">No completed session</span>
         </div>
+        <div class="post-session-kpis">
+          <article>
+            <p>Average Overall Accuracy</p>
+            <h3 id="avgOverallValue">--</h3>
+          </article>
+          <article>
+            <p>Session Score</p>
+            <h3 id="sessionScoreValue">--</h3>
+          </article>
+          <article>
+            <p>Best Combo</p>
+            <h3 id="bestComboValue">x0</h3>
+          </article>
+          <article>
+            <p>Duration</p>
+            <h3 id="sessionDurationValue">00:00</h3>
+          </article>
+        </div>
+        <article class="sub-panel human-summary">
+          <div class="panel-head">
+            <h3>Coach Summary</h3>
+            <button id="newSessionBtn" class="btn-ghost small">Back to Practice View</button>
+          </div>
+          <p id="humanSummaryText" class="muted">
+            Finish a session to get a clear human-style breakdown with next-step drills.
+          </p>
+        </article>
 
         <div class="analytics-grid">
           <article class="sub-panel">
@@ -210,6 +237,7 @@
               Click anywhere on the chart to jump replay to that moment.
             </p>
             <canvas id="accuracyChart" width="800" height="260"></canvas>
+            <div id="timelineChips" class="timeline-chips"></div>
           </article>
 
           <article class="sub-panel">

@@ -100,7 +100,13 @@ const el = {
   coachFeed: document.getElementById("coachFeed"),
   analyticsSection: document.getElementById("analyticsSection"),
   sessionSummary: document.getElementById("sessionSummary"),
+  avgOverallValue: document.getElementById("avgOverallValue"),
+  sessionScoreValue: document.getElementById("sessionScoreValue"),
+  bestComboValue: document.getElementById("bestComboValue"),
+  sessionDurationValue: document.getElementById("sessionDurationValue"),
+  humanSummaryText: document.getElementById("humanSummaryText"),
   accuracyChart: document.getElementById("accuracyChart"),
+  timelineChips: document.getElementById("timelineChips"),
   rankingList: document.getElementById("rankingList"),
   weakMoments: document.getElementById("weakMoments"),
   improvementTips: document.getElementById("improvementTips"),
@@ -126,7 +132,8 @@ const el = {
   submitScoreBtn: document.getElementById("submitScoreBtn"),
   leaderboardStatus: document.getElementById("leaderboardStatus"),
   leaderboardList: document.getElementById("leaderboardList"),
-  leaderboardScope: document.getElementById("leaderboardScope")
+  leaderboardScope: document.getElementById("leaderboardScope"),
+  newSessionBtn: document.getElementById("newSessionBtn")
 };
 
 const state = {
@@ -156,6 +163,9 @@ const state = {
   tipCounts: new Map(),
   angleTotals: new Map(),
   latestTip: "",
+  speechQueue: [],
+  speaking: false,
+  lastSpokenTipKey: "",
   lastSpeechAt: 0,
   lastSampleAt: 0,
   xp: 0,
@@ -251,12 +261,17 @@ function bindEvents() {
   el.nemotronBtn.addEventListener("click", generateNemotronFeedback);
   el.nemotronMode.addEventListener("change", handleNemotronModeChange);
   el.accuracyChart.addEventListener("click", handleChartJump);
+  el.timelineChips?.addEventListener("click", handleTimelineChipJump);
   el.replayScrubber.addEventListener("input", handleReplayScrub);
   el.replayLock.addEventListener("change", handleReplayLockChange);
   el.nemotronOutput.addEventListener("click", handleNemotronTimeJump);
   el.submitScoreBtn.addEventListener("click", submitLeaderboardEntry);
   el.proxyBaseUrl.addEventListener("change", refreshLeaderboard);
   el.leaderboardName.addEventListener("change", persistLeaderboardName);
+  el.newSessionBtn?.addEventListener("click", () => {
+    document.body.classList.remove("session-ended");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
 
   el.targetVideo.addEventListener("ended", () => {
     if (state.sessionActive) {
@@ -402,6 +417,9 @@ function applyCoachAudioSettings() {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+    state.speechQueue = [];
+    state.speaking = false;
+    state.lastSpokenTipKey = "";
   }
 }
 
@@ -830,6 +848,7 @@ async function startSession() {
   el.pauseBtn.disabled = false;
   el.endBtn.disabled = false;
   el.analyticsSection.classList.add("hidden");
+  document.body.classList.remove("session-ended");
   el.sessionSummary.textContent = "Session in progress";
 
   el.targetVideo.currentTime = 0;
@@ -869,6 +888,9 @@ function resetSessionData() {
   state.comboMilestonesSeen = new Set();
   state.sessionScoreCard = null;
   state.poseTimestampMs = { target: 0, user: 0 };
+  state.speechQueue = [];
+  state.speaking = false;
+  state.lastSpokenTipKey = "";
 
   el.liveScore.textContent = "0%";
   el.qualityBand.textContent = "Warm-up";
@@ -879,6 +901,19 @@ function resetSessionData() {
   el.coachFeed.innerHTML = "";
   setNemotronOutput("AI-enhanced feedback will appear here.");
   el.movementDescriptors.innerHTML = "";
+  if (el.timelineChips) {
+    el.timelineChips.innerHTML = "";
+  }
+  if (el.humanSummaryText) {
+    el.humanSummaryText.textContent =
+      "Finish a session to get a clear human-style breakdown with next-step drills.";
+  }
+  if (el.avgOverallValue) {
+    el.avgOverallValue.textContent = "--";
+    el.sessionScoreValue.textContent = "--";
+    el.bestComboValue.textContent = "x0";
+    el.sessionDurationValue.textContent = "00:00";
+  }
   el.submitScoreBtn.disabled = true;
   el.leaderboardStatus.textContent = "Session in progress. Finish to submit your score.";
   updateGamificationHud();
@@ -967,6 +1002,11 @@ function endSession(reason) {
   if (state.recorder && state.recorder.state !== "inactive") {
     state.recorder.stop();
   }
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+  state.speechQueue = [];
+  state.speaking = false;
   stopReplaySync();
 
   finalizeAnalytics(reason);
@@ -1277,7 +1317,10 @@ function comparePoses(
 
   const targetSemantic = semanticDescriptor(targetLandmarks);
   const userSemantic = semanticDescriptor(userLandmarks);
+  const targetPoseScript = poseScriptRelations(targetLandmarks);
+  const userPoseScript = poseScriptRelations(userLandmarks);
   const semanticIssue = compareSemanticPose(targetSemantic, userSemantic);
+  const poseScriptIssue = comparePoseScriptRelations(targetPoseScript, userPoseScript);
   const angleInsights = compareJointAngles(targetNorm, userNorm);
   const positionIssue = positionalTip(targetNorm, userNorm);
   const weakestPart = Object.entries(partScores).sort((a, b) => a[1] - b[1])[0][0];
@@ -1303,6 +1346,8 @@ function comparePoses(
     selectedIssue = timingIssue;
   } else if (weakestScore < 66) {
     selectedIssue = partIssue;
+  } else if (poseScriptIssue.text) {
+    selectedIssue = poseScriptIssue;
   } else if (semanticIssue.text) {
     selectedIssue = semanticIssue;
   } else if (angleIssue) {
@@ -1324,6 +1369,8 @@ function comparePoses(
     angleInsights,
     targetSemantic,
     userSemantic,
+    targetPoseScript,
+    userPoseScript,
     tipUrgent: weakestScore < 54 || Math.abs(timingOffsetSec) > 0.48
   };
 }
@@ -1463,6 +1510,95 @@ function semanticDescriptor(landmarks) {
     isSquat,
     wideStance,
     leanDirection
+  };
+}
+
+function poseScriptRelations(landmarks) {
+  const leftWrist = landmarks[15];
+  const rightWrist = landmarks[16];
+  const leftShoulder = landmarks[11];
+  const rightShoulder = landmarks[12];
+  const leftHip = landmarks[23];
+  const rightHip = landmarks[24];
+  const leftKnee = landmarks[25];
+  const rightKnee = landmarks[26];
+  const leftAnkle = landmarks[27];
+  const rightAnkle = landmarks[28];
+
+  if (
+    !leftWrist ||
+    !rightWrist ||
+    !leftShoulder ||
+    !rightShoulder ||
+    !leftHip ||
+    !rightHip ||
+    !leftKnee ||
+    !rightKnee ||
+    !leftAnkle ||
+    !rightAnkle
+  ) {
+    return [];
+  }
+
+  const tags = [];
+  const shoulderWidth = Math.max(distance2d(leftShoulder, rightShoulder), 0.001);
+  const ankleSpread = distance2d(leftAnkle, rightAnkle);
+
+  if (leftWrist.y < leftShoulder.y - 0.05) {
+    tags.push("left_hand_above_shoulder");
+  }
+  if (rightWrist.y < rightShoulder.y - 0.05) {
+    tags.push("right_hand_above_shoulder");
+  }
+  if (leftWrist.y < leftHip.y && rightWrist.y < rightHip.y) {
+    tags.push("both_hands_high");
+  }
+
+  const leftKneeAngle = jointAngle(landmarks, 23, 25, 27);
+  const rightKneeAngle = jointAngle(landmarks, 24, 26, 28);
+  const kneeAvg = ((leftKneeAngle ?? 170) + (rightKneeAngle ?? 170)) / 2;
+  if (kneeAvg < 155) {
+    tags.push("knees_bent");
+  }
+  if (ankleSpread / shoulderWidth > 1.3) {
+    tags.push("wide_stance");
+  }
+
+  const shoulderCenterX = (leftShoulder.x + rightShoulder.x) / 2;
+  const hipCenterX = (leftHip.x + rightHip.x) / 2;
+  const lean = shoulderCenterX - hipCenterX;
+  if (lean > 0.035) {
+    tags.push("torso_lean_right");
+  } else if (lean < -0.035) {
+    tags.push("torso_lean_left");
+  } else {
+    tags.push("torso_centered");
+  }
+
+  return tags;
+}
+
+function comparePoseScriptRelations(targetTags, userTags) {
+  const target = new Set(targetTags || []);
+  const user = new Set(userTags || []);
+  const missing = [...target].filter((tag) => !user.has(tag));
+  if (!missing.length) {
+    return { text: "", key: "" };
+  }
+  const primary = missing[0];
+  const cueMap = {
+    left_hand_above_shoulder: "Raise your left hand above shoulder height at this beat.",
+    right_hand_above_shoulder: "Raise your right hand above shoulder height at this beat.",
+    both_hands_high: "Bring both hands higher and finish the line cleanly.",
+    knees_bent: "Bend both knees to match the depth of the move.",
+    wide_stance: "Step your feet wider to match the reference stance.",
+    torso_lean_right: "Lean your torso slightly to the right to match the groove.",
+    torso_lean_left: "Lean your torso slightly to the left to match the groove.",
+    torso_centered: "Bring your torso back to center for this beat."
+  };
+  return {
+    text: cueMap[primary] || "Match the target body relation more precisely.",
+    key: `posescript:${primary}`
   };
 }
 
@@ -1726,6 +1862,8 @@ function applyLiveAnalysis(analysis, t) {
     time: t,
     target: analysis.targetSemantic,
     user: analysis.userSemantic,
+    targetPoseScript: analysis.targetPoseScript || [],
+    userPoseScript: analysis.userPoseScript || [],
     score: overall
   });
 
@@ -1871,64 +2009,111 @@ function maybeSpeakTip(tip, meta = {}) {
   const now = performance.now();
   const mode = el.voiceMode.value;
   const minInterval =
-    mode === "calm" ? 10800 : mode === "active" ? 7600 : 6200;
-  const highPriority =
-    Boolean(meta.urgent) ||
-    (meta.overall ?? 100) < 55 ||
-    Math.abs(meta.timingOffsetSec ?? 0) > 0.45;
+    mode === "calm" ? 24000 : mode === "active" ? 18500 : 14500;
+  const tipKey = String(meta.tipKey || "");
+  const actionableCorrection =
+    (meta.overall ?? 100) < 70 ||
+    Math.abs(meta.timingOffsetSec ?? 0) > 0.34 ||
+    tipKey.startsWith("posescript:") ||
+    tipKey.startsWith("semantic:") ||
+    tipKey.startsWith("joint:");
 
-  if (!highPriority && now - state.lastSpeechAt < minInterval) {
+  if (!actionableCorrection) {
     return;
   }
-  if (!highPriority && meta.tipKey && meta.tipKey === state.lastCoachKey && now - state.lastSpeechAt < 14000) {
+  if (now - state.lastSpeechAt < minInterval) {
+    return;
+  }
+  if (tipKey && tipKey === state.lastSpokenTipKey && now - state.lastSpeechAt < minInterval * 1.5) {
+    return;
+  }
+  if (state.speaking) {
     return;
   }
 
-  const speechText = buildVoiceLine(tip, mode, meta);
-  const utterance = new SpeechSynthesisUtterance(speechText);
-  const voice = chooseCoachVoice();
-  if (voice) {
-    utterance.voice = voice;
-  }
-  utterance.rate = mode === "hype" ? 0.99 : 0.92;
-  utterance.pitch = mode === "hype" ? 1.04 : 0.98;
-  utterance.volume = clamp(state.coachVolume, 0, 1);
-
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
-  state.lastSpeechAt = now;
+  const speechText = buildVoiceLine(tip, mode, meta).trim();
+  enqueueCoachSpeech(speechText, {
+    urgent: false,
+    tipKey
+  });
 }
 
 function buildVoiceLine(tip, mode, meta) {
-  const calmOpeners = [
-    "Nice effort.",
-    "Good try.",
-    "Keep it smooth."
-  ];
-  const activeOpeners = [
-    "Good energy.",
-    "Stay with the beat.",
-    "Let's sharpen this."
-  ];
-  const hypeOpeners = [
-    "Yes, keep going.",
-    "You're in it now.",
-    "Let's hit this clean."
-  ];
-
-  const pool = mode === "hype" ? hypeOpeners : mode === "active" ? activeOpeners : calmOpeners;
-  const opener = pool[(Math.floor((meta.overall ?? 0) + state.combo) % pool.length)];
-  const shortTip = shortenVoiceTip(tip);
-  return `${opener} ${shortTip}`.replace(/\s+/g, " ").trim();
+  const prefix = mode === "hype" ? "Correction now:" : "Correction:";
+  const shortTip = shortenVoiceTip(tip)
+    .replace(/^Let's clean this section\.?/i, "")
+    .replace(/^Good momentum\.?/i, "")
+    .replace(/^Nice groove\.?/i, "")
+    .replace(/^Coach note:?/i, "")
+    .trim();
+  return `${prefix} ${shortTip}`.replace(/\s+/g, " ").trim();
 }
 
 function shortenVoiceTip(tip) {
   const normalized = String(tip || "")
     .replace(/Timing is \d+ms (late|early)\.?/gi, "")
+    .replace(/Focus on [^.]*\./gi, "")
+    .replace(/\([^)]*\)/g, "")
     .replace(/\s+/g, " ")
     .trim();
   const firstSentence = normalized.split(/[.!?]/)[0]?.trim() || normalized;
-  return firstSentence.slice(0, 130);
+  return firstSentence.slice(0, 170);
+}
+
+function enqueueCoachSpeech(text, meta = {}) {
+  if (!text) {
+    return;
+  }
+
+  const item = { text, tipKey: meta.tipKey || "", urgent: Boolean(meta.urgent) };
+  if (state.speaking) {
+    if (item.urgent) {
+      state.speechQueue = [item];
+    }
+    return;
+  }
+
+  state.speechQueue.push(item);
+  if (state.speechQueue.length > 1) {
+    state.speechQueue = state.speechQueue.slice(0, 1);
+  }
+  drainCoachSpeechQueue();
+}
+
+function drainCoachSpeechQueue() {
+  if (state.speaking || !state.speechQueue.length) {
+    return;
+  }
+  const next = state.speechQueue.shift();
+  speakCoachLine(next);
+}
+
+function speakCoachLine(item) {
+  if (!item?.text || !("speechSynthesis" in window)) {
+    return;
+  }
+
+  state.speaking = true;
+  const mode = el.voiceMode.value;
+  const utterance = new SpeechSynthesisUtterance(item.text);
+  const voice = chooseCoachVoice();
+  if (voice) {
+    utterance.voice = voice;
+  }
+  utterance.rate = mode === "hype" ? 0.96 : 0.9;
+  utterance.pitch = mode === "hype" ? 1.02 : 0.96;
+  utterance.volume = clamp(state.coachVolume, 0, 1);
+  utterance.onend = () => {
+    state.speaking = false;
+    state.lastSpeechAt = performance.now();
+    state.lastSpokenTipKey = item.tipKey || state.lastSpokenTipKey;
+    drainCoachSpeechQueue();
+  };
+  utterance.onerror = () => {
+    state.speaking = false;
+    drainCoachSpeechQueue();
+  };
+  window.speechSynthesis.speak(utterance);
 }
 
 function chooseCoachVoice() {
@@ -1994,6 +2179,7 @@ function logCoach(message, urgent) {
 
 function finalizeAnalytics(reason) {
   el.analyticsSection.classList.remove("hidden");
+  document.body.classList.add("session-ended");
 
   if (!state.history.length) {
     el.sessionSummary.textContent = "No tracked movement detected";
@@ -2005,6 +2191,7 @@ function finalizeAnalytics(reason) {
     setNemotronOutput(
       "No movement landmarks were captured in this run. Re-run with full body visible in both videos."
     );
+    renderPostSessionSummary(0, {}, reason);
     return;
   }
 
@@ -2031,8 +2218,12 @@ function finalizeAnalytics(reason) {
   el.submitScoreBtn.disabled = false;
   el.leaderboardStatus.textContent = `Session score ready: ${score} pts. Submit to leaderboard.`;
 
+  renderPostSessionSummary(avgScore, avgPartScores, reason);
   renderAnalytics(avgScore, avgPartScores, reason);
   prepareReplaySources();
+  window.requestAnimationFrame(() => {
+    el.analyticsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 function computeLeaderboardScore(avgScore) {
@@ -2077,6 +2268,7 @@ function renderAnalytics(avgScore, avgPartScores, reason) {
   el.sessionSummary.textContent = `${Math.round(avgScore)}% avg | ${reason}${summaryBadges}`;
 
   drawAccuracyChart();
+  renderTimelineChips();
   renderRanking(avgPartScores);
   renderWeakMoments();
   renderImprovementTips(avgPartScores, avgScore);
@@ -2085,12 +2277,72 @@ function renderAnalytics(avgScore, avgPartScores, reason) {
 
 function renderEmptyAnalytics() {
   drawAccuracyChart();
+  renderTimelineChips();
   el.rankingList.innerHTML = "<li><span>Not enough data</span><strong>--</strong></li>";
   el.weakMoments.innerHTML = "<li>No weak-point timeline available.</li>";
   el.improvementTips.innerHTML =
     "<li>Keep your whole body in frame, then run another session for full feedback.</li>";
   el.movementDescriptors.innerHTML =
     "<li>PoseScript-style descriptors require tracked landmarks from both videos.</li>";
+}
+
+function renderPostSessionSummary(avgScore, avgPartScores, reason) {
+  const weakestPart = Object.entries(avgPartScores).sort((a, b) => a[1] - b[1])[0]?.[0] || null;
+  const weakestLabel = weakestPart ? PART_LABELS[weakestPart] : "Full body visibility";
+  const humanSummary = buildHumanSummary(Math.round(avgScore), weakestLabel, reason);
+
+  if (el.avgOverallValue) {
+    el.avgOverallValue.textContent = `${Math.round(avgScore)}%`;
+    el.sessionScoreValue.textContent = state.sessionScoreCard ? String(state.sessionScoreCard.score) : "--";
+    el.bestComboValue.textContent = `x${state.bestCombo}`;
+    el.sessionDurationValue.textContent = formatTime(state.sessionDuration);
+  }
+  if (el.humanSummaryText) {
+    el.humanSummaryText.textContent = humanSummary;
+  }
+}
+
+function buildHumanSummary(avgScore, weakestLabel, reason) {
+  if (!state.history.length) {
+    return "Tracking quality was too low this run. Step back until shoulders, hips, knees, and ankles are visible in both videos, then rerun for full feedback.";
+  }
+
+  const stability = avgScore >= 85 ? "strong" : avgScore >= 72 ? "solid" : "developing";
+  const timingMs =
+    state.timingOffsets.length > 0
+      ? Math.round(
+          (1000 * state.timingOffsets.reduce((sum, value) => sum + Math.abs(value), 0)) /
+            state.timingOffsets.length
+        )
+      : 0;
+  return `Session ended: ${reason}. Your overall control was ${stability} at ${Math.round(
+    avgScore
+  )}% average accuracy. Biggest improvement opportunity is ${weakestLabel.toLowerCase()}, with timing drift around ${timingMs}ms. Focus on one clean repetition at 0.75x, then repeat at 1x and keep the same body shape.`;
+}
+
+function renderTimelineChips() {
+  if (!el.timelineChips) {
+    return;
+  }
+  if (!state.history.length) {
+    el.timelineChips.innerHTML = "<span class=\"timeline-empty\">No timeline yet</span>";
+    return;
+  }
+
+  const total = state.history.length;
+  const chipCount = Math.min(8, Math.max(4, Math.floor(total / 30)));
+  const points = [];
+  for (let i = 0; i < chipCount; i += 1) {
+    const index = Math.min(total - 1, Math.floor((i / (chipCount - 1 || 1)) * (total - 1)));
+    points.push(state.history[index]);
+  }
+
+  el.timelineChips.innerHTML = points
+    .map(
+      (point) =>
+        `<button class=\"chip-btn\" data-jump=\"${point.time}\">${formatTime(point.time)} · ${point.overall}%</button>`
+    )
+    .join("");
 }
 
 function renderMovementDescriptors() {
@@ -2117,6 +2369,9 @@ function summarizeSemanticTimeline() {
     leanLeft: 0,
     leanRight: 0
   };
+  const poseScriptMissing = new Map();
+  let poseScriptMatchSum = 0;
+  let poseScriptSampleCount = 0;
 
   for (const sample of state.semanticSamples) {
     const t = sample.target;
@@ -2149,6 +2404,21 @@ function summarizeSemanticTimeline() {
     if (t.leanDirection !== u.leanDirection) {
       mismatchCounts.torsoLean += 1;
     }
+
+    const targetTags = Array.isArray(sample.targetPoseScript) ? sample.targetPoseScript : [];
+    const userTags = new Set(Array.isArray(sample.userPoseScript) ? sample.userPoseScript : []);
+    if (targetTags.length) {
+      let matches = 0;
+      for (const tag of targetTags) {
+        if (userTags.has(tag)) {
+          matches += 1;
+        } else {
+          poseScriptMissing.set(tag, (poseScriptMissing.get(tag) || 0) + 1);
+        }
+      }
+      poseScriptMatchSum += matches / targetTags.length;
+      poseScriptSampleCount += 1;
+    }
   }
 
   const n = state.semanticSamples.length;
@@ -2166,13 +2436,38 @@ function summarizeSemanticTimeline() {
   const squatRate = Math.round((100 * userCounts.deepSquat) / n);
   const wideStanceRate = Math.round((100 * userCounts.wideStance) / n);
   const mismatchRate = Math.round((100 * topMismatch[1]) / n);
+  const poseScriptMatchRate = poseScriptSampleCount
+    ? Math.round((100 * poseScriptMatchSum) / poseScriptSampleCount)
+    : 0;
+  const topPoseScriptGap = [...poseScriptMissing.entries()].sort((a, b) => b[1] - a[1])[0];
+  const poseScriptGapLabel = topPoseScriptGap
+    ? humanizePoseScriptTag(topPoseScriptGap[0])
+    : "none";
+  const poseScriptGapRate = topPoseScriptGap
+    ? Math.round((100 * topPoseScriptGap[1]) / Math.max(1, poseScriptSampleCount))
+    : 0;
 
   return [
     `Pose language profile: hands-up ${handsUpRate}% | deep-squat ${squatRate}% | wide-stance ${wideStanceRate}%.`,
     `Lean tendency: left ${leftLeanRate}% vs right ${rightLeanRate}%.`,
     `Primary semantic mismatch: ${mismatchLabel} (${mismatchRate}% of sampled frames).`,
-    `Training cue: repeat weak sections at 0.75x until this mismatch drops below 25%.`
+    `PoseScript relation match: ${poseScriptMatchRate}% | biggest relation gap: ${poseScriptGapLabel} (${poseScriptGapRate}% samples).`,
+    `Training cue: repeat weak sections at 0.75x until relation-match is above 80%.`
   ];
+}
+
+function humanizePoseScriptTag(tag) {
+  const map = {
+    left_hand_above_shoulder: "left hand above shoulder",
+    right_hand_above_shoulder: "right hand above shoulder",
+    both_hands_high: "both hands high",
+    knees_bent: "knees bent",
+    wide_stance: "wide stance",
+    torso_lean_right: "torso leaning right",
+    torso_lean_left: "torso leaning left",
+    torso_centered: "torso centered"
+  };
+  return map[tag] || tag.replaceAll("_", " ");
 }
 
 function drawAccuracyChart() {
@@ -2399,6 +2694,18 @@ function handleWeakMomentJump(event) {
     return;
   }
 
+  const jumpTime = Number(button.dataset.jump);
+  if (!Number.isFinite(jumpTime)) {
+    return;
+  }
+  jumpReplayTo(jumpTime, true);
+}
+
+function handleTimelineChipJump(event) {
+  const button = event.target.closest("button[data-jump]");
+  if (!button) {
+    return;
+  }
   const jumpTime = Number(button.dataset.jump);
   if (!Number.isFinite(jumpTime)) {
     return;
