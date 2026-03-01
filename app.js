@@ -78,14 +78,16 @@ const el = {
   targetStatus: document.getElementById("targetStatus"),
   userStatus: document.getElementById("userStatus"),
   speedControl: document.getElementById("speedControl"),
-  targetVolume: document.getElementById("targetVolume"),
-  targetMute: document.getElementById("targetMute"),
+  targetMuteBtn: document.getElementById("targetMuteBtn"),
+  targetVolDownBtn: document.getElementById("targetVolDownBtn"),
+  targetVolUpBtn: document.getElementById("targetVolUpBtn"),
   userSourceSelect: document.getElementById("userSourceSelect"),
   userUploadWrap: document.getElementById("userUploadWrap"),
   mirrorMode: document.getElementById("mirrorMode"),
-  audioCoach: document.getElementById("audioCoach"),
-  coachMute: document.getElementById("coachMute"),
-  coachVolume: document.getElementById("coachVolume"),
+  coachEnableBtn: document.getElementById("coachEnableBtn"),
+  coachMuteBtn: document.getElementById("coachMuteBtn"),
+  coachVolDownBtn: document.getElementById("coachVolDownBtn"),
+  coachVolUpBtn: document.getElementById("coachVolUpBtn"),
   voiceMode: document.getElementById("voiceMode"),
   startBtn: document.getElementById("startBtn"),
   pauseBtn: document.getElementById("pauseBtn"),
@@ -162,6 +164,7 @@ const state = {
   bestCombo: 0,
   targetVolume: 0.75,
   targetMuted: false,
+  coachEnabled: true,
   coachVolume: 0.72,
   coachMuted: false,
   badges: [],
@@ -233,11 +236,13 @@ function bindEvents() {
   el.speedControl.addEventListener("change", handleSpeedChange);
   el.userSourceSelect.addEventListener("change", handleUserSourceChange);
   el.mirrorMode.addEventListener("change", applyMirrorMode);
-  el.targetVolume.addEventListener("input", handleTargetAudioControlChange);
-  el.targetMute.addEventListener("change", handleTargetAudioControlChange);
-  el.coachVolume.addEventListener("input", handleCoachAudioControlChange);
-  el.coachMute.addEventListener("change", handleCoachAudioControlChange);
-  el.audioCoach.addEventListener("change", handleCoachAudioControlChange);
+  el.targetMuteBtn.addEventListener("click", toggleTargetMute);
+  el.targetVolDownBtn.addEventListener("click", () => adjustTargetVolume(-0.12));
+  el.targetVolUpBtn.addEventListener("click", () => adjustTargetVolume(0.12));
+  el.coachEnableBtn.addEventListener("click", toggleCoachEnabled);
+  el.coachMuteBtn.addEventListener("click", toggleCoachMute);
+  el.coachVolDownBtn.addEventListener("click", () => adjustCoachVolume(-0.12));
+  el.coachVolUpBtn.addEventListener("click", () => adjustCoachVolume(0.12));
   el.startBtn.addEventListener("click", startSession);
   el.pauseBtn.addEventListener("click", togglePause);
   el.endBtn.addEventListener("click", () => endSession("Manually ended"));
@@ -309,47 +314,52 @@ function hydrateAudioSettings() {
         state.targetVolume = clamp(Number(saved.targetVolume), 0, 1);
       }
       state.targetMuted = Boolean(saved.targetMuted);
+      if (typeof saved.coachEnabled === "boolean") {
+        state.coachEnabled = saved.coachEnabled;
+      } else if (typeof saved.audioCoachEnabled === "boolean") {
+        state.coachEnabled = saved.audioCoachEnabled;
+      }
       if (Number.isFinite(Number(saved.coachVolume))) {
         state.coachVolume = clamp(Number(saved.coachVolume), 0, 1);
       }
       state.coachMuted = Boolean(saved.coachMuted);
-      if (typeof saved.audioCoachEnabled === "boolean") {
-        el.audioCoach.checked = saved.audioCoachEnabled;
-      }
     }
   } catch {
     // keep defaults
   }
 
-  el.targetVolume.value = String(Math.round(state.targetVolume * 100));
-  el.targetMute.checked = state.targetMuted;
-  el.coachVolume.value = String(Math.round(state.coachVolume * 100));
-  el.coachMute.checked = state.coachMuted;
   applyTargetAudioSettings();
   applyCoachAudioSettings();
+  updateAudioButtons();
 }
 
 function persistAudioSettings() {
   const payload = {
     targetVolume: state.targetVolume,
     targetMuted: state.targetMuted,
+    coachEnabled: state.coachEnabled,
     coachVolume: state.coachVolume,
-    coachMuted: state.coachMuted,
-    audioCoachEnabled: el.audioCoach.checked
+    coachMuted: state.coachMuted
   };
   window.localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(payload));
 }
 
-function parseSliderVolume(inputEl, fallback = 0.75) {
-  const parsed = Number(inputEl?.value);
-  const value = Number.isFinite(parsed) ? parsed : Math.round(fallback * 100);
-  return clamp(value / 100, 0, 1);
+function toggleTargetMute() {
+  state.targetMuted = !state.targetMuted;
+  applyTargetAudioSettings();
+  updateAudioButtons();
+  persistAudioSettings();
 }
 
-function handleTargetAudioControlChange() {
-  state.targetVolume = parseSliderVolume(el.targetVolume, state.targetVolume);
-  state.targetMuted = el.targetMute.checked;
+function adjustTargetVolume(delta) {
+  state.targetVolume = clamp(state.targetVolume + delta, 0, 1);
+  if (state.targetVolume <= 0.001) {
+    state.targetMuted = true;
+  } else if (delta > 0) {
+    state.targetMuted = false;
+  }
   applyTargetAudioSettings();
+  updateAudioButtons();
   persistAudioSettings();
 }
 
@@ -361,19 +371,51 @@ function applyTargetAudioSettings() {
   el.replayTarget.muted = state.targetMuted;
 }
 
-function handleCoachAudioControlChange() {
-  state.coachVolume = parseSliderVolume(el.coachVolume, state.coachVolume);
-  state.coachMuted = el.coachMute.checked;
+function toggleCoachEnabled() {
+  state.coachEnabled = !state.coachEnabled;
   applyCoachAudioSettings();
+  updateAudioButtons();
+  persistAudioSettings();
+}
+
+function toggleCoachMute() {
+  state.coachMuted = !state.coachMuted;
+  applyCoachAudioSettings();
+  updateAudioButtons();
+  persistAudioSettings();
+}
+
+function adjustCoachVolume(delta) {
+  state.coachVolume = clamp(state.coachVolume + delta, 0, 1);
+  if (state.coachVolume <= 0.001) {
+    state.coachMuted = true;
+  } else if (delta > 0) {
+    state.coachMuted = false;
+  }
+  applyCoachAudioSettings();
+  updateAudioButtons();
   persistAudioSettings();
 }
 
 function applyCoachAudioSettings() {
-  if (!el.audioCoach.checked || state.coachMuted || state.coachVolume <= 0.01) {
+  if (!state.coachEnabled || state.coachMuted || state.coachVolume <= 0.01) {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
   }
+}
+
+function updateAudioButtons() {
+  const targetOn = !state.targetMuted && state.targetVolume > 0.01;
+  el.targetMuteBtn.textContent = targetOn ? "🔊" : "🔇";
+  el.targetMuteBtn.dataset.active = targetOn ? "true" : "false";
+
+  const coachOn = state.coachEnabled;
+  const coachAudible = coachOn && !state.coachMuted && state.coachVolume > 0.01;
+  el.coachEnableBtn.textContent = coachOn ? "🎙" : "⏹";
+  el.coachEnableBtn.dataset.active = coachOn ? "true" : "false";
+  el.coachMuteBtn.textContent = coachAudible ? "🔈" : "🔇";
+  el.coachMuteBtn.dataset.active = coachAudible ? "true" : "false";
 }
 
 function setNemotronOutput(text) {
@@ -1831,7 +1873,7 @@ function maybeSpeakTip(tip, meta = {}) {
   }
   state.latestTip = tip;
   if (
-    !el.audioCoach.checked ||
+    !state.coachEnabled ||
     state.coachMuted ||
     state.coachVolume <= 0.01 ||
     !("speechSynthesis" in window)
