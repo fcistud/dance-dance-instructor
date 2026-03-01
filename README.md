@@ -12,7 +12,7 @@ Improve.ai uses:
 
 ## Practice screen
 
-![Improve.ai practice screen](docs/screenshots/practice-screen.png)
+![Improve.ai Landing Page](docs/screenshots/practice-screen.png)
 
 ## Run locally (fast path)
 
