@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: improveai-nemotron-proxy
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NEMOTRON_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        value: "https://your-user.github.io"
