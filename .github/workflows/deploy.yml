@@ -31,7 +31,7 @@ jobs:
       - name: Build static bundle
         run: |
           mkdir -p _site
-          cp index.html styles.css app.js README.md pitch.md _site/
+          cp index.html app.html landing.css landing.js styles.css app.js README.md pitch.md _site/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

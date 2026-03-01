@@ -111,11 +111,11 @@ const el = {
   replayLock: document.getElementById("replayLock"),
   replayScrubber: document.getElementById("replayScrubber"),
   replayTimeLabel: document.getElementById("replayTimeLabel"),
-  levelValue: document.getElementById("levelValue"),
-  levelMeta: document.getElementById("levelMeta"),
   xpValue: document.getElementById("xpValue"),
   xpMeta: document.getElementById("xpMeta"),
+  xpMeter: document.getElementById("xpMeter"),
   comboValue: document.getElementById("comboValue"),
+  comboMeter: document.getElementById("comboMeter"),
   nemotronBtn: document.getElementById("nemotronBtn"),
   nemotronMode: document.getElementById("nemotronMode"),
   proxyBaseUrl: document.getElementById("proxyBaseUrl"),
@@ -159,9 +159,10 @@ const state = {
   lastSpeechAt: 0,
   lastSampleAt: 0,
   xp: 0,
-  level: 1,
   combo: 0,
   bestCombo: 0,
+  lastHudXp: 0,
+  lastHudCombo: 0,
   targetVolume: 0.75,
   targetMuted: false,
   coachEnabled: true,
@@ -194,8 +195,7 @@ const PERFECT_HIT_THRESHOLD = 88;
 const MIN_LANDMARK_VISIBILITY = 0.24;
 const MIN_TARGET_COVERAGE = 0.34;
 const MIN_USER_COVERAGE = 0.3;
-const XP_BASE_LEVEL_COST = 100;
-const XP_LEVEL_STEP = 55;
+const COMBO_TIER_SIZE = 12;
 const CHART_PAD = { left: 42, right: 18, top: 18, bottom: 34 };
 const LOCAL_LEADERBOARD_KEY = "improveai.leaderboard.v1";
 const AUDIO_SETTINGS_KEY = "improveai.audio.v1";
@@ -1817,54 +1817,41 @@ function scoreGamification(overall) {
   }
 }
 
-function levelProgressFromXp(totalXp) {
-  const xp = Math.max(0, totalXp);
-  let level = 1;
-  let consumed = 0;
-  while (true) {
-    const cost = XP_BASE_LEVEL_COST + (level - 1) * XP_LEVEL_STEP;
-    if (xp < consumed + cost) {
-      const intoLevel = xp - consumed;
-      return {
-        level,
-        levelCost: cost,
-        intoLevel,
-        toNext: Math.ceil(cost - intoLevel),
-        levelStart: consumed,
-        nextLevelXp: consumed + cost
-      };
-    }
-    consumed += cost;
-    level += 1;
-  }
-}
-
-function levelTitle(level) {
-  if (level >= 12) {
-    return "Virtuoso";
-  }
-  if (level >= 9) {
-    return "Performer";
-  }
-  if (level >= 6) {
-    return "Choreographer";
-  }
-  if (level >= 3) {
-    return "Rhythm Builder";
-  }
-  return "Rookie";
-}
-
 function updateGamificationHud() {
   const xp = Math.round(state.xp);
-  const progress = levelProgressFromXp(state.xp);
-  state.level = progress.level;
+  const xpDelta = xp - state.lastHudXp;
+  const comboDelta = state.combo - state.lastHudCombo;
+  const comboTierProgress = ((state.combo % COMBO_TIER_SIZE) / COMBO_TIER_SIZE) * 100;
 
-  el.levelValue.textContent = String(progress.level);
-  el.levelMeta.textContent = `${Math.round(progress.intoLevel)}/${progress.levelCost} XP`;
   el.xpValue.textContent = String(xp);
-  el.xpMeta.textContent = `${progress.toNext} to L${progress.level + 1} · ${levelTitle(progress.level)}`;
+  el.xpMeta.textContent =
+    xpDelta > 0 ? `+${xpDelta} XP burst` : "Session momentum";
+  if (el.xpMeter) {
+    const xpMeterProgress = Math.min(100, (xp % 200) / 2);
+    el.xpMeter.style.width = `${xpMeterProgress}%`;
+  }
   el.comboValue.textContent = state.combo >= 6 ? `x${state.combo} Chain` : `x${state.combo}`;
+  if (el.comboMeter) {
+    el.comboMeter.style.width = `${comboTierProgress}%`;
+  }
+  animateHudValue(el.xpValue, xpDelta > 0);
+  animateHudValue(el.comboValue, comboDelta > 0);
+  const comboCard = el.comboValue?.closest(".combo-card");
+  if (comboCard) {
+    comboCard.classList.toggle("hot", state.combo >= 8);
+  }
+  state.lastHudXp = xp;
+  state.lastHudCombo = state.combo;
+}
+
+function animateHudValue(element, shouldAnimate) {
+  if (!element || !shouldAnimate) {
+    return;
+  }
+  element.classList.remove("bump");
+  // Force restart so repeated updates still animate.
+  void element.offsetWidth;
+  element.classList.add("bump");
 }
 
 function maybeSpeakTip(tip, meta = {}) {
@@ -2006,10 +1993,18 @@ function logCoach(message, urgent) {
 }
 
 function finalizeAnalytics(reason) {
+  el.analyticsSection.classList.remove("hidden");
+
   if (!state.history.length) {
     el.sessionSummary.textContent = "No tracked movement detected";
     el.submitScoreBtn.disabled = true;
     el.leaderboardStatus.textContent = "No score submitted. Movement was not detected.";
+    state.sessionScoreCard = null;
+    renderEmptyAnalytics();
+    prepareReplaySources();
+    setNemotronOutput(
+      "No movement landmarks were captured in this run. Re-run with full body visible in both videos."
+    );
     return;
   }
 
@@ -2038,7 +2033,6 @@ function finalizeAnalytics(reason) {
 
   renderAnalytics(avgScore, avgPartScores, reason);
   prepareReplaySources();
-  el.analyticsSection.classList.remove("hidden");
 }
 
 function computeLeaderboardScore(avgScore) {
@@ -2087,6 +2081,16 @@ function renderAnalytics(avgScore, avgPartScores, reason) {
   renderWeakMoments();
   renderImprovementTips(avgPartScores, avgScore);
   renderMovementDescriptors();
+}
+
+function renderEmptyAnalytics() {
+  drawAccuracyChart();
+  el.rankingList.innerHTML = "<li><span>Not enough data</span><strong>--</strong></li>";
+  el.weakMoments.innerHTML = "<li>No weak-point timeline available.</li>";
+  el.improvementTips.innerHTML =
+    "<li>Keep your whole body in frame, then run another session for full feedback.</li>";
+  el.movementDescriptors.innerHTML =
+    "<li>PoseScript-style descriptors require tracked landmarks from both videos.</li>";
 }
 
 function renderMovementDescriptors() {
@@ -2182,7 +2186,8 @@ function drawAccuracyChart() {
   ctx.fillStyle = "rgba(6, 16, 25, 0.82)";
   ctx.fillRect(0, 0, width, height);
 
-  const maxTime = state.history[state.history.length - 1].time || 1;
+  const hasHistory = state.history.length > 0;
+  const maxTime = hasHistory ? state.history[state.history.length - 1].time || 1 : 1;
 
   ctx.strokeStyle = "rgba(158, 197, 216, 0.28)";
   ctx.lineWidth = 1;
@@ -2205,25 +2210,34 @@ function drawAccuracyChart() {
   gradient.addColorStop(0.5, "#fdb44b");
   gradient.addColorStop(1, "#55efc4");
 
-  ctx.strokeStyle = gradient;
-  ctx.lineWidth = 2.8;
-  ctx.beginPath();
+  if (hasHistory) {
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
 
-  state.history.forEach((entry, index) => {
-    const x =
-      pad.left +
-      ((width - pad.left - pad.right) * (entry.time / maxTime));
-    const y =
-      pad.top +
-      ((height - pad.top - pad.bottom) * (1 - entry.overall / 100));
+    state.history.forEach((entry, index) => {
+      const x =
+        pad.left +
+        ((width - pad.left - pad.right) * (entry.time / maxTime));
+      const y =
+        pad.top +
+        ((height - pad.top - pad.bottom) * (1 - entry.overall / 100));
 
-    if (index === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
-  });
-  ctx.stroke();
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "rgba(239, 251, 255, 0.78)";
+    ctx.font = "15px 'Bricolage Grotesque'";
+    ctx.fillText("No tracked movement this session.", pad.left + 8, height / 2 - 6);
+    ctx.fillStyle = "rgba(158, 197, 216, 0.75)";
+    ctx.font = "12px 'Space Mono'";
+    ctx.fillText("Keep both dancers fully visible and try again.", pad.left + 8, height / 2 + 16);
+  }
 
   ctx.fillStyle = "rgba(255, 111, 89, 0.9)";
   for (const weakMoment of state.weakMoments) {
@@ -2526,11 +2540,6 @@ async function submitLeaderboardEntry() {
 }
 
 async function generateNemotronFeedback() {
-  if (!state.history.length) {
-    setNemotronOutput("Complete a session first to generate AI feedback.");
-    return;
-  }
-
   el.nemotronBtn.disabled = true;
   setNemotronOutput("Generating coaching notes...");
 
@@ -2538,10 +2547,20 @@ async function generateNemotronFeedback() {
   const mode = el.nemotronMode.value;
 
   try {
-    const output =
-      mode === "proxy"
-        ? await generateNemotronFeedbackViaProxy(payload)
-        : await generateNemotronFeedbackDirect(payload);
+    let output = "";
+    if (mode === "proxy") {
+      try {
+        output = await generateNemotronFeedbackViaProxy(payload);
+      } catch (proxyError) {
+        if (el.nemotronKey.value.trim()) {
+          output = await generateNemotronFeedbackDirect(payload);
+        } else {
+          throw proxyError;
+        }
+      }
+    } else {
+      output = await generateNemotronFeedbackDirect(payload);
+    }
     setNemotronOutput(output);
   } catch (error) {
     console.error(error);
@@ -2613,9 +2632,10 @@ async function generateNemotronFeedbackDirect(payload) {
 }
 
 function buildNemotronPrompt() {
-  const avgScore = Math.round(
-    state.history.reduce((sum, row) => sum + row.overall, 0) / state.history.length
-  );
+  const hasHistory = state.history.length > 0;
+  const avgScore = hasHistory
+    ? Math.round(state.history.reduce((sum, row) => sum + row.overall, 0) / state.history.length)
+    : 0;
 
   const avgParts = Object.entries(state.partTotals)
     .map(([part, stats]) => ({
@@ -2646,6 +2666,9 @@ function buildNemotronPrompt() {
 
   return [
     "Create a post-session dance coaching report.",
+    hasHistory
+      ? "Data quality: tracked pose landmarks for both reference and performer."
+      : "Data quality: pose landmarks were missing or too noisy for full scoring.",
     `Average accuracy: ${avgScore}%`,
     `Session length: ${formatTime(state.sessionDuration)}`,
     `Best combo: x${state.bestCombo}`,
