@@ -14,113 +14,169 @@
   </head>
   <body class="practice-screen">
     <div class="background-glow"></div>
-    <main class="app-shell">
+    <main class="app-shell practice-layout">
       <header class="practice-nav">
         <h1 class="practice-brand">Improved.ai</h1>
+
+        <section class="practice-hud session-live-block" aria-label="Session gamification">
+          <article class="hud-card xp-card">
+            <p>XP</p>
+            <h3 id="xpValue" class="hud-value">0</h3>
+            <small id="xpMeta">Session momentum</small>
+            <div class="hud-meter"><span id="xpMeter"></span></div>
+          </article>
+          <article class="hud-card combo-card">
+            <p>Combo</p>
+            <h3 id="comboValue" class="hud-value">x0</h3>
+            <small>Streak builder</small>
+            <div class="hud-meter"><span id="comboMeter"></span></div>
+          </article>
+        </section>
+
         <div class="practice-nav-actions">
           <a class="pill-link" href="index.html">Home</a>
           <a class="pill-link active" href="app.html">Practice</a>
         </div>
       </header>
-      <section class="practice-hud session-live-block">
-        <article class="hud-card xp-card">
-          <p>XP</p>
-          <h3 id="xpValue" class="hud-value">0</h3>
-          <small id="xpMeta">Session momentum</small>
-          <div class="hud-meter"><span id="xpMeter"></span></div>
-        </article>
-        <article class="hud-card combo-card">
-          <p>Combo</p>
-          <h3 id="comboValue" class="hud-value">x0</h3>
-          <small>Streak builder</small>
-          <div class="hud-meter"><span id="comboMeter"></span></div>
-        </article>
+
+      <section class="panel practice-stage-shell session-live-block">
+        <div class="compare-grid">
+          <article class="compare-cell">
+            <div class="compare-head">
+              <span class="stage-pill">🎬 Reference</span>
+              <span class="status-chip" id="targetStatus">No video</span>
+            </div>
+            <div class="stage stage-frame">
+              <video id="targetVideo" playsinline preload="metadata"></video>
+              <canvas id="targetCanvas"></canvas>
+              <div class="mini-audio" aria-label="Reference audio controls">
+                <button
+                  id="targetMuteBtn"
+                  class="icon-audio"
+                  type="button"
+                  title="Toggle reference audio"
+                >
+                  🔊
+                </button>
+                <button
+                  id="targetVolDownBtn"
+                  class="icon-audio"
+                  type="button"
+                  title="Reference volume down"
+                >
+                  -
+                </button>
+                <button
+                  id="targetVolUpBtn"
+                  class="icon-audio"
+                  type="button"
+                  title="Reference volume up"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          </article>
+
+          <article class="compare-cell">
+            <div class="compare-head">
+              <span class="stage-pill">📹 You</span>
+              <span class="status-chip" id="userStatus">Choose input</span>
+            </div>
+            <div class="stage stage-frame" id="userStage">
+              <video id="userVideo" playsinline preload="metadata" muted></video>
+              <canvas id="userCanvas"></canvas>
+              <div class="mini-audio" aria-label="Coach voice controls">
+                <button
+                  id="coachEnableBtn"
+                  class="icon-audio"
+                  type="button"
+                  title="Enable or disable coach voice"
+                >
+                  🎙
+                </button>
+                <button
+                  id="coachMuteBtn"
+                  class="icon-audio"
+                  type="button"
+                  title="Mute or unmute coach voice"
+                >
+                  🔈
+                </button>
+                <button
+                  id="coachVolDownBtn"
+                  class="icon-audio"
+                  type="button"
+                  title="Coach volume down"
+                >
+                  -
+                </button>
+                <button
+                  id="coachVolUpBtn"
+                  class="icon-audio"
+                  type="button"
+                  title="Coach volume up"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
       </section>
 
-      <section class="panel-grid inputs-grid session-live-block">
-        <article class="panel video-panel">
-          <div class="panel-head">
-            <h2>Reference Dancer</h2>
-            <span class="status-chip" id="targetStatus">No video</span>
+      <section class="panel score-strip session-live-block" aria-label="Live accuracy summary">
+        <article class="overall-score-card">
+          <div class="score-ring" id="overallScoreRing">
+            <span id="liveScore">0%</span>
           </div>
-          <div class="controls-row">
-            <label class="file-picker">
-              <span>Upload Target Video</span>
-              <input id="targetInput" type="file" accept="video/*" />
-            </label>
-            <label>
-              Speed
-              <select id="speedControl">
-                <option value="0.5">0.5x</option>
-                <option value="0.75">0.75x</option>
-                <option value="1" selected>1x</option>
-              </select>
-            </label>
-          </div>
-          <div class="stage">
-            <video id="targetVideo" playsinline preload="metadata"></video>
-            <canvas id="targetCanvas"></canvas>
-            <div class="mini-audio" aria-label="Reference audio controls">
-              <button id="targetMuteBtn" class="icon-audio" type="button" title="Toggle reference audio">
-                🔊
-              </button>
-              <button id="targetVolDownBtn" class="icon-audio" type="button" title="Reference volume down">
-                -
-              </button>
-              <button id="targetVolUpBtn" class="icon-audio" type="button" title="Reference volume up">
-                +
-              </button>
-            </div>
-          </div>
+          <p id="qualityBand">Warm-up</p>
+          <small id="weakPart">-</small>
         </article>
 
-        <article class="panel video-panel hidden-media-panel">
-          <div class="panel-head">
-            <h2>You</h2>
-            <span class="status-chip" id="userStatus">Choose input</span>
-          </div>
-          <div class="stage" id="userStage">
-            <video id="userVideo" playsinline preload="metadata" muted></video>
-            <canvas id="userCanvas"></canvas>
-          </div>
+        <div id="partBars" class="part-bars"></div>
+
+        <article class="grade-score-card">
+          <p>Grade</p>
+          <h3 id="gradeLetter">C</h3>
+          <small id="sessionTime">00:00</small>
         </article>
       </section>
 
       <section class="panel controls-panel session-live-block">
         <div class="session-controls">
-          <button id="startBtn" class="btn-primary">Start Session</button>
+          <button id="startBtn" class="btn-primary">Start Dancing</button>
           <button id="pauseBtn" class="btn-ghost" disabled>Pause</button>
           <button id="endBtn" class="btn-ghost" disabled>End Session</button>
         </div>
-        <div class="live-readout">
-          <div>
-            <p>Live accuracy</p>
-            <h3 id="liveScore">0%</h3>
-          </div>
-          <div>
-            <p>Current move quality</p>
-            <h3 id="qualityBand">Waiting</h3>
-          </div>
-          <div>
-            <p>Weakest body part</p>
-            <h3 id="weakPart">-</h3>
-          </div>
-          <div>
-            <p>Session time</p>
-            <h3 id="sessionTime">00:00</h3>
-          </div>
-        </div>
+
         <div class="controls-row practice-toolbar">
+          <label class="file-picker">
+            <span>Ref Video</span>
+            <input id="targetInput" type="file" accept="video/*" />
+          </label>
           <label>
             Input
             <select id="userSourceSelect">
               <option value="webcam" selected>Webcam</option>
-              <option value="upload">Upload video</option>
+              <option value="upload">Upload Video</option>
             </select>
           </label>
           <label class="file-picker hidden" id="userUploadWrap">
-            <span>Upload Practice Video</span>
+            <span>Upload Practice</span>
             <input id="userInput" type="file" accept="video/*" />
+          </label>
+          <label>
+            Speed
+            <select id="speedControl">
+              <option value="0.5">0.5x</option>
+              <option value="0.75">0.75x</option>
+              <option value="1" selected>1x</option>
+            </select>
+          </label>
+          <label class="toggle">
+            <input id="mirrorMode" type="checkbox" checked />
+            <span>Mirror</span>
           </label>
           <label>
             Voice style
@@ -130,25 +186,9 @@
               <option value="hype">Hype coach</option>
             </select>
           </label>
-          <label class="toggle">
-            <input id="mirrorMode" type="checkbox" checked />
-            <span>Mirror</span>
-          </label>
-          <div class="mini-audio coach-mini-inline" aria-label="Coach voice controls">
-            <button id="coachEnableBtn" class="icon-audio" type="button" title="Enable or disable coach voice">
-              🎙
-            </button>
-            <button id="coachMuteBtn" class="icon-audio" type="button" title="Mute or unmute coach voice">
-              🔈
-            </button>
-            <button id="coachVolDownBtn" class="icon-audio" type="button" title="Coach volume down">
-              -
-            </button>
-            <button id="coachVolUpBtn" class="icon-audio" type="button" title="Coach volume up">
-              +
-            </button>
-          </div>
         </div>
+
+        <ul id="coachFeed" class="coach-feed inline-feed"></ul>
       </section>
 
       <section class="panel leaderboard-shell hidden" id="leaderboardShell">
@@ -168,21 +208,6 @@
           </div>
           <p class="muted" id="leaderboardStatus">Complete a session to submit a score.</p>
           <ol id="leaderboardList" class="leaderboard-list"></ol>
-        </article>
-      </section>
-
-      <section class="panel-grid feedback-grid session-live-block">
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Body Part Accuracy</h2>
-          </div>
-          <div id="partBars" class="part-bars"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Live Coach</h2>
-          </div>
-          <ul id="coachFeed" class="coach-feed"></ul>
         </article>
       </section>
 
@@ -248,7 +273,6 @@
             <h3>Movement Language (PoseScript-style)</h3>
             <ul id="movementDescriptors" class="movement-descriptors"></ul>
           </article>
-
         </div>
 
         <article class="sub-panel replay-panel">

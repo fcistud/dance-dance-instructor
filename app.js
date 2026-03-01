@@ -51,12 +51,21 @@ const PARTS = {
 };
 
 const PART_LABELS = {
-  head: "Head/Neck",
+  head: "Head",
   torso: "Torso",
   leftArm: "Left Arm",
   rightArm: "Right Arm",
   leftLeg: "Left Leg",
   rightLeg: "Right Leg"
+};
+
+const PART_EMOJIS = {
+  head: "🗣️",
+  torso: "🫁",
+  leftArm: "💪",
+  rightArm: "💪",
+  leftLeg: "🦵",
+  rightLeg: "🦵"
 };
 
 const PART_WEIGHTS = {
@@ -134,7 +143,9 @@ const el = {
   leaderboardList: document.getElementById("leaderboardList"),
   leaderboardScope: document.getElementById("leaderboardScope"),
   leaderboardShell: document.getElementById("leaderboardShell"),
-  newSessionBtn: document.getElementById("newSessionBtn")
+  newSessionBtn: document.getElementById("newSessionBtn"),
+  overallScoreRing: document.getElementById("overallScoreRing"),
+  gradeLetter: document.getElementById("gradeLetter")
 };
 
 const state = {
@@ -203,9 +214,9 @@ const MAX_BUFFER_SECONDS = 8;
 const TIMING_UPDATE_INTERVAL_SECONDS = 0.75;
 const TIP_COOLDOWN_SECONDS = 1.35;
 const PERFECT_HIT_THRESHOLD = 88;
-const MIN_LANDMARK_VISIBILITY = 0.24;
-const MIN_TARGET_COVERAGE = 0.34;
-const MIN_USER_COVERAGE = 0.3;
+const MIN_LANDMARK_VISIBILITY = 0.16;
+const MIN_TARGET_COVERAGE = 0.2;
+const MIN_USER_COVERAGE = 0.2;
 const COMBO_TIER_SIZE = 12;
 const CHART_PAD = { left: 42, right: 18, top: 18, bottom: 34 };
 const LOCAL_LEADERBOARD_KEY = "improveai.leaderboard.v1";
@@ -220,6 +231,7 @@ function initPartTotals() {
 
 function init() {
   renderPartBars(Object.keys(PARTS).reduce((acc, part) => ({ ...acc, [part]: 0 }), {}));
+  updateScoreStripVisuals(0);
   el.proxyBaseUrl.value = suggestDefaultProxyBase();
   handleNemotronModeChange();
   setNemotronOutput("AI-enhanced feedback will appear here.");
@@ -271,6 +283,7 @@ function bindEvents() {
   el.leaderboardName.addEventListener("change", persistLeaderboardName);
   el.newSessionBtn?.addEventListener("click", () => {
     document.body.classList.remove("session-ended");
+    el.analyticsSection.classList.add("hidden");
     el.leaderboardShell?.classList.add("hidden");
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
@@ -668,7 +681,7 @@ async function initializePose() {
   const poseOptions = {
     baseOptions: {
       modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task",
       delegate: "GPU"
     },
     runningMode: "VIDEO",
@@ -696,17 +709,17 @@ function setStatus(element, text, stateName) {
   element.textContent = text;
   element.classList.remove("highlight");
   if (stateName === "error") {
-    element.style.borderColor = "rgba(255, 111, 89, 0.6)";
-    element.style.color = "#ff9b8d";
+    element.style.borderColor = "#e99f98";
+    element.style.color = "#b6493f";
   } else if (stateName === "ok") {
-    element.style.borderColor = "rgba(85, 239, 196, 0.6)";
-    element.style.color = "#7df2d1";
+    element.style.borderColor = "#8ecc9e";
+    element.style.color = "#2e8452";
   } else if (stateName === "loading") {
-    element.style.borderColor = "rgba(253, 180, 75, 0.55)";
-    element.style.color = "#ffd08f";
+    element.style.borderColor = "#edc28d";
+    element.style.color = "#9d6d21";
   } else {
-    element.style.borderColor = "rgba(77, 215, 255, 0.45)";
-    element.style.color = "#4dd7ff";
+    element.style.borderColor = "#d2d3d8";
+    element.style.color = "#646973";
   }
 }
 
@@ -899,6 +912,7 @@ function resetSessionData() {
   el.qualityBand.textContent = "Warm-up";
   el.weakPart.textContent = "-";
   el.sessionTime.textContent = "00:00";
+  updateScoreStripVisuals(0);
 
   renderPartBars(Object.keys(PARTS).reduce((acc, part) => ({ ...acc, [part]: 0 }), {}));
   el.coachFeed.innerHTML = "";
@@ -1841,11 +1855,56 @@ function qualityBand(score) {
   return "Needs Focus";
 }
 
+function scoreColor(score) {
+  if (score >= 88) {
+    return "#46bb62";
+  }
+  if (score >= 76) {
+    return "#86c24f";
+  }
+  if (score >= 62) {
+    return "#db9c33";
+  }
+  return "#ea6a5d";
+}
+
+function scoreGrade(score) {
+  if (score >= 92) {
+    return "A";
+  }
+  if (score >= 82) {
+    return "B";
+  }
+  if (score >= 70) {
+    return "C";
+  }
+  if (score >= 58) {
+    return "D";
+  }
+  return "F";
+}
+
+function updateScoreStripVisuals(overall) {
+  const color = scoreColor(overall);
+  if (el.overallScoreRing) {
+    el.overallScoreRing.style.setProperty("--score", String(clamp(overall, 0, 100)));
+    el.overallScoreRing.style.setProperty("--score-color", color);
+  }
+  if (el.gradeLetter) {
+    el.gradeLetter.textContent = scoreGrade(overall);
+    el.gradeLetter.style.color = color;
+  }
+  if (el.liveScore) {
+    el.liveScore.style.color = color;
+  }
+}
+
 function applyLiveAnalysis(analysis, t) {
   const overall = Math.round(analysis.overall);
   const coachLine = composeCoachLine(analysis, overall);
   el.liveScore.textContent = `${overall}%`;
   el.qualityBand.textContent = analysis.qualityBand;
+  updateScoreStripVisuals(overall);
   const timingBadge =
     Math.abs(analysis.timingOffsetSec) > 0.22
       ? ` (${analysis.timingOffsetSec > 0 ? "late" : "early"})`
@@ -1966,13 +2025,12 @@ function updateGamificationHud() {
   const comboTierProgress = ((state.combo % COMBO_TIER_SIZE) / COMBO_TIER_SIZE) * 100;
 
   el.xpValue.textContent = String(xp);
-  el.xpMeta.textContent =
-    xpDelta > 0 ? `+${xpDelta} XP burst` : "Session momentum";
+  el.xpMeta.textContent = xpDelta > 0 ? `+${xpDelta} XP` : "Session momentum";
   if (el.xpMeter) {
     const xpMeterProgress = Math.min(100, (xp % 200) / 2);
     el.xpMeter.style.width = `${xpMeterProgress}%`;
   }
-  el.comboValue.textContent = state.combo >= 6 ? `x${state.combo} Chain` : `x${state.combo}`;
+  el.comboValue.textContent = `x${state.combo}`;
   if (el.comboMeter) {
     el.comboMeter.style.width = `${comboTierProgress}%`;
   }
@@ -2141,7 +2199,7 @@ function renderPartBars(scores) {
     el.partBars.innerHTML = parts
       .map(
         (part) =>
-          `<div class="part-bar" data-part="${part}"><span>${PART_LABELS[part]}</span><div class="track"><div class="fill" style="width:0%"></div></div><strong>0%</strong></div>`
+          `<div class="part-bar" data-part="${part}"><div class="part-icon">${PART_EMOJIS[part] || "•"}</div><span>${PART_LABELS[part]}</span><strong>0</strong><div class="track"><div class="fill" style="width:0%"></div></div></div>`
       )
       .join("");
   }
@@ -2155,7 +2213,7 @@ function renderPartBars(scores) {
     const label = row.querySelector("strong");
     const value = Math.round(scores[part] ?? 0);
     fill.style.width = `${value}%`;
-    label.textContent = `${value}%`;
+    label.textContent = `${value}`;
   }
 }
 
