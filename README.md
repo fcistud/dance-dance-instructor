@@ -5,7 +5,25 @@ Improve.ai uses:
 - The restored `dance-coach-ai-restored` app as the working dance studio at `/app.html` (React + Vite)
 - A Python FastAPI backend with PoseScript-style analysis and Nemotron feedback
 
-## Local development
+## Live links
+
+- Vercel (frontend + backend): `https://monaco-nine-theta.vercel.app`
+- GitHub Pages (frontend): `https://fcistud.github.io/dance-dance-instructor/`
+
+## Run locally (fast path)
+
+Start everything (frontend + backend) in one command:
+
+```bash
+VITE_NEMOTRON_API_KEY='your_nvidia_key' npm run dev:local
+```
+
+Notes:
+- This starts FastAPI at `http://127.0.0.1:8000`
+- It starts Vite on the next available port (`5174`, `5175`, etc.)
+- Open `/app.html` on that Vite URL for the practice app
+
+## Local development (manual)
 
 ### Frontend
 
@@ -35,25 +53,30 @@ The Vite dev server proxies these routes to the backend:
 
 ## Deployment
 
-## Vercel (single deploy)
+## Run online
 
-This repo includes:
-- `vercel.json`
-- `api/index.py` (ASGI entrypoint)
-- `requirements.txt`
+### Vercel (frontend + backend)
 
-So frontend + backend deploy together on Vercel.
+Production URL:
+- `https://monaco-nine-theta.vercel.app`
 
-Set env vars in Vercel project settings:
-- `VITE_NEMOTRON_API_KEY` (backend key)
-- `ALLOWED_ORIGINS` (optional, comma-separated)
+Health check:
+- `https://monaco-nine-theta.vercel.app/api/health`
 
-## GitHub Pages (frontend only)
+If deploying again from local:
+```bash
+npx vercel deploy --prod -y --env VITE_NEMOTRON_API_KEY='your_nvidia_key' --env ALLOWED_ORIGINS='https://monaco-nine-theta.vercel.app,https://fcistud.github.io,http://localhost:5174,http://localhost:5173,http://localhost:3000'
+```
+
+### GitHub Pages (frontend only)
+
+Pages URL:
+- `https://fcistud.github.io/dance-dance-instructor/`
 
 Workflow: `.github/workflows/deploy.yml`.
 
 Set repository secret:
-- `VITE_API_BASE_URL` pointing to your deployed backend URL (for example `https://your-backend.vercel.app`)
+- `VITE_API_BASE_URL` pointing to deployed backend URL (`https://monaco-nine-theta.vercel.app`)
 
 ## GitHub Secrets only setup (recommended)
 
