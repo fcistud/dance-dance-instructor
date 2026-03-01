@@ -3,26 +3,22 @@
  *
  * Uses PoseScript's anatomical pose descriptions to generate natural,
  * context-aware corrections in real-time during dance practice.
- *
- * Example output:
- * - "Reach your left arm up overhead!"
- * - "Straighten your right leg!"
- * - "Beautiful form! Keep it up!"
+ * Voice cues are intentionally sparse and only triggered when useful.
  */
 
-import { generatePoseScriptCorrection, generatePoseScriptPraise } from './poseScriptRT.js';
+import { generatePoseScriptCorrection } from './poseScriptRT.js';
 
-const COOLDOWN_MS = 3000;
-const SCORE_THRESHOLD = 55;
-const PRAISE_THRESHOLD = 82;
-const PRAISE_COOLDOWN_MS = 8000;
+const MIN_SPEAK_INTERVAL_MS = 12000;
+const REPEAT_WINDOW_MS = 26000;
+const INTERVENTION_THRESHOLD = 48;
 
 let lastSpeakTime = 0;
-let lastPraiseTime = 0;
+let lastMessage = '';
 let lastSpokenSegment = null;
 let enabled = true;
 let voicesReady = false;
 let preferredVoice = null;
+let coachVolume = 0.72;
 
 // Pre-load voices on first user interaction
 export function initVoices() {
@@ -50,61 +46,72 @@ export function initVoices() {
 }
 
 /**
- * Generate and speak a voice cue using PoseScript analysis.
- * Called every comparison frame (~100ms), but only speaks every COOLDOWN_MS.
+ * Called every comparison frame (~100ms), but only speaks occasionally.
  */
 export function generateVoiceCue(comparison, refLandmarks, userLandmarks) {
     if (!enabled || !comparison || !window.speechSynthesis) return;
+    if (!comparison.segments) return;
 
     const now = Date.now();
-    if (now - lastSpeakTime < COOLDOWN_MS) return;
+    if (now - lastSpeakTime < MIN_SPEAK_INTERVAL_MS) return;
 
-    // Try PoseScript correction first
+    const { segment: worstSegment, score: worstScore } = getWorstSegment(comparison);
+    if (!worstSegment || worstScore === null || worstScore > INTERVENTION_THRESHOLD) return;
+
+    const synth = window.speechSynthesis;
+    if (synth.speaking || synth.pending) return;
+
     const correction = generatePoseScriptCorrection(comparison, refLandmarks, userLandmarks);
+    if (!correction) return;
 
-    if (correction) {
-        // Avoid repeating the same segment correction
-        const worstSeg = getWorstSegment(comparison);
-        if (worstSeg === lastSpokenSegment && now - lastSpeakTime < COOLDOWN_MS * 2) return;
+    const message = sanitizeCorrection(correction);
+    if (!message || message.length < 6) return;
 
-        speak(correction);
-        lastSpeakTime = now;
-        lastSpokenSegment = worstSeg;
+    const repeatedMessage = message === lastMessage;
+    const repeatedSegment = worstSegment === lastSpokenSegment;
+    if ((repeatedMessage || repeatedSegment) && now - lastSpeakTime < REPEAT_WINDOW_MS) {
         return;
     }
 
-    // Praise when doing well
-    if (comparison.overall >= PRAISE_THRESHOLD && now - lastPraiseTime > PRAISE_COOLDOWN_MS) {
-        const praise = generatePoseScriptPraise(comparison);
-        if (praise) {
-            speak(praise);
-            lastSpeakTime = now;
-            lastPraiseTime = now;
-        }
-    }
+    speak(message);
+    lastSpeakTime = now;
+    lastMessage = message;
+    lastSpokenSegment = worstSegment;
 }
 
 function getWorstSegment(comparison) {
-    let worst = null, worstScore = 100;
+    let worst = null;
+    let worstScore = 100;
+
     for (const [key, score] of Object.entries(comparison.segments)) {
         if (score !== null && score < worstScore) {
             worstScore = score;
             worst = key;
         }
     }
-    return worst;
+
+    return {
+        segment: worst,
+        score: worst ? worstScore : null,
+    };
+}
+
+function sanitizeCorrection(text) {
+    if (!text) return '';
+    return text
+        .replace(/\s+/g, ' ')
+        .replace(/[!]{2,}/g, '!')
+        .trim();
 }
 
 function speak(text) {
     const synth = window.speechSynthesis;
     if (!synth) return;
 
-    synth.cancel();
-
     const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.1;
-    u.pitch = 1.05;
-    u.volume = 0.85;
+    u.rate = 0.94;
+    u.pitch = 0.98;
+    u.volume = coachVolume;
     if (preferredVoice) u.voice = preferredVoice;
     synth.speak(u);
 }
@@ -114,11 +121,15 @@ export function setAudioCoachEnabled(val) {
     if (!val) window.speechSynthesis?.cancel();
 }
 
+export function setAudioCoachVolume(nextVolume) {
+    coachVolume = Math.max(0, Math.min(1, Number(nextVolume) || 0));
+}
+
 export function isAudioCoachEnabled() { return enabled; }
 
 export function resetAudioCoach() {
     lastSpeakTime = 0;
-    lastPraiseTime = 0;
+    lastMessage = '';
     lastSpokenSegment = null;
     window.speechSynthesis?.cancel();
 }

@@ -1,136 +1,176 @@
 /**
- * NVIDIA Nemotron AI Feedback — Calls the Python backend which combines
- * PoseScript-style pose descriptions with Nemotron AI for rich coaching.
+ * Nemotron AI feedback client.
  *
- * Backend: FastAPI at /api/feedback (proxied via Vite in dev, direct URL in prod)
- * Fallback: Direct Nemotron API when a user-provided key is available
+ * Strategy:
+ * 1. Prefer backend route (PoseScript + Nemotron) for reliable CORS and richer context.
+ * 2. If backend fails and personal key exists, attempt direct Nemotron call.
+ * 3. Return readable diagnostics when deployment config is missing.
  */
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-const BACKEND_URL = import.meta.env.DEV ? '/api/feedback' : `${API_BASE}/api/feedback`;
 const FALLBACK_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const MODEL = 'nvidia/llama-3.3-nemotron-super-49b-v1';
+const BACKEND_STORAGE_KEY = 'improve_ai_backend_base_url';
 
-/**
- * Generate smart AI coaching feedback.
- * Tries backend first (PoseScript + Nemotron), falls back to direct Nemotron.
- */
-export async function generateAIFeedback(sessionAnalysis, apiKey, sessionFrames = null) {
-    const trimmedKey = apiKey?.trim() || '';
+function normalizeBase(base) {
+    if (!base) return '';
+    return String(base).trim().replace(/\/$/, '');
+}
 
-    // Try Python backend first (has PoseScript analysis)
-    const backendResult = await callBackend(sessionAnalysis, trimmedKey, sessionFrames);
-    if (backendResult.feedback) {
-        return backendResult.feedback;
+function isGitHubPages() {
+    return typeof window !== 'undefined' && window.location.hostname.endsWith('github.io');
+}
+
+function unique(list) {
+    return [...new Set(list.filter(Boolean))];
+}
+
+function buildBackendCandidates(backendOverride) {
+    const override = normalizeBase(backendOverride);
+    const stored = normalizeBase(getStoredBackendUrl());
+    const configured = normalizeBase(API_BASE);
+    const candidates = [];
+
+    if (import.meta.env.DEV) {
+        candidates.push('/api/feedback');
     }
 
-    // Fallback to direct Nemotron only when personal key is provided
+    for (const base of [override, stored, configured]) {
+        if (!base) continue;
+        candidates.push(`${base}/api/feedback`);
+        candidates.push(`${base}/feedback`);
+    }
+
+    // Same-origin API works on fullstack hosts (e.g. Vercel), but not on GitHub Pages.
+    if (!import.meta.env.DEV && !isGitHubPages()) {
+        candidates.push('/api/feedback');
+    }
+
+    return unique(candidates);
+}
+
+/**
+ * Generate coaching feedback. Returns a plain readable string.
+ */
+export async function generateAIFeedback(sessionAnalysis, apiKey, sessionFrames = null, backendOverride = '') {
+    const trimmedKey = apiKey?.trim() || '';
+    const backendResult = await callBackend(sessionAnalysis, trimmedKey, sessionFrames, backendOverride);
+    if (backendResult.feedback) return backendResult.feedback;
+
     if (trimmedKey) {
         const fallbackResult = await callNemotronDirect(sessionAnalysis, trimmedKey);
-        if (fallbackResult.feedback) {
-            return fallbackResult.feedback;
-        }
+        if (fallbackResult.feedback) return fallbackResult.feedback;
 
-        if (backendResult.error) {
-            return `${backendResult.error}\n\nDirect fallback failed: ${fallbackResult.error}`;
-        }
-        return fallbackResult.error;
+        const backendError = backendResult.error ? `${backendResult.error}\n\n` : '';
+        return `${backendError}Direct fallback failed: ${fallbackResult.error}`;
     }
 
     if (backendResult.error) {
-        return `${backendResult.error}\n\nTip: add a personal NVIDIA API key for direct fallback.`;
+        return `${backendResult.error}\n\nTip: add a personal NVIDIA key or configure a backend URL.`;
     }
 
-    return 'AI feedback is currently unavailable. Please try again.';
+    return 'AI feedback is unavailable right now. Please try again.';
 }
 
-async function callBackend(sessionAnalysis, apiKey, sessionFrames) {
-    try {
-        const response = await fetch(BACKEND_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                session_analysis: sessionAnalysis,
-                session_frames: sessionFrames,
-                api_key: apiKey || null,
-            }),
-        });
+async function callBackend(sessionAnalysis, apiKey, sessionFrames, backendOverride) {
+    const endpoints = buildBackendCandidates(backendOverride);
 
-        if (!response.ok) {
-            const errText = await response.text();
-            const detail = parseErrorDetail(errText);
-
-            if (response.status === 400 && /no api key/i.test(detail)) {
-                return {
-                    feedback: null,
-                    error: 'Backend is reachable, but no NVIDIA API key is configured on the server.',
-                };
-            }
-
-            if (response.status >= 500) {
-                return {
-                    feedback: null,
-                    error: `Backend error (${response.status}). ${detail || 'Check backend logs.'}`,
-                };
-            }
-
-            return {
-                feedback: null,
-                error: `Backend request failed (${response.status}). ${detail || 'Please try again.'}`,
-            };
-        }
-
-        const data = await response.json();
-        if (!data.feedback) {
-            return {
-                feedback: null,
-                error: 'Backend returned no feedback text.',
-            };
-        }
-        return { feedback: data.feedback, error: null };
-    } catch (err) {
-        const missingApiBaseHint = !import.meta.env.DEV && !API_BASE
-            ? ' VITE_API_BASE_URL is not set for this build.'
-            : '';
-        const reason = err?.message ? ` (${err.message})` : '';
+    if (endpoints.length === 0) {
         return {
             feedback: null,
-            error: `Could not reach backend at ${BACKEND_URL}${reason}.${missingApiBaseHint} Ensure backend is deployed and CORS is configured.`,
+            error: 'No backend URL is configured for this deployment. Add one under "Use Personal Key".',
         };
     }
+
+    let lastError = '';
+
+    for (const endpoint of endpoints) {
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_analysis: sessionAnalysis,
+                    session_frames: sessionFrames,
+                    api_key: apiKey || null,
+                }),
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                const detail = parseErrorDetail(errText);
+
+                if (response.status === 400 && /no api key/i.test(detail)) {
+                    return {
+                        feedback: null,
+                        error: 'Backend is reachable, but no NVIDIA API key is configured there.',
+                    };
+                }
+
+                if (response.status === 405 && endpoint.startsWith('/api') && isGitHubPages()) {
+                    lastError = 'Backend request failed (405). GitHub Pages is static-only. Set a deployed backend URL.';
+                    continue;
+                }
+
+                if (response.status >= 500) {
+                    lastError = `Backend error (${response.status}) at ${endpoint}: ${detail || 'Check backend logs.'}`;
+                    continue;
+                }
+
+                lastError = `Backend request failed (${response.status}) at ${endpoint}. ${detail || ''}`.trim();
+                continue;
+            }
+
+            const data = await response.json();
+            if (!data.feedback) {
+                lastError = `Backend at ${endpoint} returned no feedback text.`;
+                continue;
+            }
+
+            return { feedback: data.feedback, error: null };
+        } catch (err) {
+            const reason = err?.message ? ` (${err.message})` : '';
+            lastError = `Could not reach backend at ${endpoint}${reason}. Check CORS and deployment URL.`;
+        }
+    }
+
+    return {
+        feedback: null,
+        error: lastError || 'All backend endpoints failed.',
+    };
 }
 
 async function callNemotronDirect(sessionAnalysis, apiKey) {
     const { overallAvg, focusAreas, strengths, timeline } = sessionAnalysis;
 
-    let prompt = `Analyze my dance session and give PoseScript-style corrections:\n\n`;
+    let prompt = 'Analyze my dance session and provide practical coaching:\n\n';
     prompt += `Overall accuracy: ${Math.round(overallAvg)}%\n\n`;
 
     if (focusAreas?.length > 0) {
-        prompt += `PROBLEM AREAS:\n`;
+        prompt += 'MAIN WEAKNESSES:\n';
         for (const area of focusAreas.slice(0, 3)) {
-            prompt += `- ${area.label}: ${Math.round(area.avg)}% match`;
-            if (area.trend > 5) prompt += ` [improving]`;
-            if (area.trend < -5) prompt += ` [declining]`;
-            prompt += `\n`;
+            prompt += `- ${area.label}: ${Math.round(area.avg)}%`;
+            if (area.trend > 5) prompt += ' (improving)';
+            if (area.trend < -5) prompt += ' (declining)';
+            prompt += '\n';
         }
-        prompt += `\n`;
+        prompt += '\n';
     }
 
     if (strengths?.length > 0) {
-        prompt += `STRONG AREAS: ${strengths.map(s => `${s.label} (${Math.round(s.avg)}%)`).join(', ')}\n\n`;
+        prompt += `STRENGTHS: ${strengths.map((s) => `${s.label} ${Math.round(s.avg)}%`).join(', ')}\n\n`;
     }
 
     if (timeline?.length > 0) {
-        prompt += `TIMELINE:\n`;
+        prompt += 'TIMELINE SNAPSHOT:\n';
         for (const phase of timeline) {
             prompt += `- ${phase.label}: ${phase.avg}%`;
             if (phase.weakestSegment) prompt += ` (weakest: ${phase.weakestSegment})`;
-            prompt += `\n`;
+            prompt += '\n';
         }
     }
 
-    prompt += `\nGive specific corrections. What should I practice first?`;
+    prompt += '\nGive concise instructor-style feedback with clear drills and timestamp references when possible.';
 
     try {
         const response = await fetch(FALLBACK_URL, {
@@ -142,11 +182,14 @@ async function callNemotronDirect(sessionAnalysis, apiKey) {
             body: JSON.stringify({
                 model: MODEL,
                 messages: [
-                    { role: 'system', content: 'You are DanceCoach AI, an expert dance instructor. Give warm, specific feedback under 200 words. Use dance terminology and end with encouragement.' },
-                    { role: 'user', content: prompt }
+                    {
+                        role: 'system',
+                        content: 'You are an expert dance coach. Be specific, warm, and practical. Keep it under 220 words.'
+                    },
+                    { role: 'user', content: prompt },
                 ],
-                max_tokens: 400,
-                temperature: 0.7,
+                max_tokens: 420,
+                temperature: 0.65,
                 stream: false,
             }),
         });
@@ -165,9 +208,13 @@ async function callNemotronDirect(sessionAnalysis, apiKey) {
         if (!content) {
             return { feedback: null, error: 'NVIDIA API returned no feedback content.' };
         }
+
         return { feedback: content, error: null };
     } catch (err) {
-        return { feedback: null, error: `Could not connect to NVIDIA API: ${err.message}` };
+        return {
+            feedback: null,
+            error: `Could not connect to NVIDIA API: ${err.message || 'network error'}`
+        };
     }
 }
 
@@ -176,9 +223,10 @@ function parseErrorDetail(rawText) {
 
     try {
         const parsed = JSON.parse(rawText);
-        return parsed?.detail || parsed?.error?.message || rawText;
+        const detail = parsed?.detail || parsed?.error?.message || rawText;
+        return String(detail).slice(0, 240);
     } catch {
-        return rawText;
+        return String(rawText).replace(/\s+/g, ' ').slice(0, 240);
     }
 }
 
@@ -193,5 +241,25 @@ export function getStoredApiKey() {
 }
 
 export function storeApiKey(key) {
-    try { localStorage.setItem('nemotron_api_key', key); } catch { }
+    try {
+        localStorage.setItem('nemotron_api_key', key || '');
+    } catch {
+        // ignore storage errors
+    }
+}
+
+export function getStoredBackendUrl() {
+    try {
+        return localStorage.getItem(BACKEND_STORAGE_KEY) || '';
+    } catch {
+        return '';
+    }
+}
+
+export function storeBackendUrl(url) {
+    try {
+        localStorage.setItem(BACKEND_STORAGE_KEY, normalizeBase(url));
+    } catch {
+        // ignore storage errors
+    }
 }

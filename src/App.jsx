@@ -5,13 +5,29 @@ import UserVideo from './components/UserVideo';
 import ScoreDisplay from './components/ScoreDisplay';
 import SessionSummary from './components/SessionSummary';
 import { comparePoses } from './utils/poseSimilarity';
-import { generateVoiceCue, setAudioCoachEnabled, resetAudioCoach, initVoices } from './utils/audioCoach';
+import {
+    generateVoiceCue,
+    setAudioCoachEnabled,
+    setAudioCoachVolume,
+    resetAudioCoach,
+    initVoices
+} from './utils/audioCoach';
 import { startRecording, stopRecording, clearRecording } from './utils/sessionRecorder';
 
-const VIEWS = { WELCOME: 'welcome', PRACTICE: 'practice', SUMMARY: 'summary' };
+const VIEWS = { PRACTICE: 'practice', SUMMARY: 'summary' };
+
+const clampVolume = (value) => Math.max(0, Math.min(1, Math.round(value * 10) / 10));
+
+function getInitialXp() {
+    try {
+        return Number(localStorage.getItem('improve_ai_xp') || 0);
+    } catch {
+        return 0;
+    }
+}
 
 export default function App() {
-    const [view, setView] = useState(VIEWS.WELCOME);
+    const [view, setView] = useState(VIEWS.PRACTICE);
     const [videoFile, setVideoFile] = useState(null);
     const [videoName, setVideoName] = useState('');
     const [isActive, setIsActive] = useState(false);
@@ -21,113 +37,27 @@ export default function App() {
     const [sessionData, setSessionData] = useState([]);
     const [sessionTime, setSessionTime] = useState(0);
     const [voiceCoach, setVoiceCoach] = useState(true);
+    const [coachMuted, setCoachMuted] = useState(false);
+    const [coachVolume, setCoachVolume] = useState(0.7);
+    const [referenceMuted, setReferenceMuted] = useState(false);
+    const [referenceVolume, setReferenceVolume] = useState(0.8);
     const [recordingUrl, setRecordingUrl] = useState(null);
-    const [inputMode, setInputMode] = useState('webcam'); // 'webcam' or 'video'
+    const [inputMode, setInputMode] = useState('webcam');
     const [userVideoFile, setUserVideoFile] = useState(null);
+    const [statusMessage, setStatusMessage] = useState('Upload a reference video, then press Start.');
+    const [combo, setCombo] = useState(0);
+    const [xp, setXp] = useState(getInitialXp);
 
     const videoPlayerRef = useRef(null);
     const webcamRef = useRef(null);
     const userVideoRef = useRef(null);
     const comparisonLoopRef = useRef(null);
     const sessionTimerRef = useRef(null);
-    const sampleCountRef = useRef(0);
-    const [dragging, setDragging] = useState(false);
-
-    // ─── File Upload ───
-    const handleFileUpload = useCallback((file) => {
-        if (!file || !file.type.startsWith('video/')) return;
-        setVideoFile(file);
-        setVideoName(file.name);
-        setView(VIEWS.PRACTICE);
-        setSessionData([]);
-        setComparison(null);
-        setSessionTime(0);
-        setIsActive(false);
-    }, []);
-
-    const handleFileInput = (e) => {
-        const file = e.target.files?.[0];
-        if (file) handleFileUpload(file);
-    };
-
-    const handleDrop = (e) => {
-        e.preventDefault();
-        setDragging(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) handleFileUpload(file);
-    };
-
-    // ─── Start / Stop Session ───
-    const handleStart = useCallback(() => {
-        setIsActive(true);
-        setSessionData([]);
-        setComparison(null);
-        setSessionTime(0);
-        sampleCountRef.current = 0;
-        sessionDataRef.current = [];
-        resetAudioCoach();
-        initVoices();
-        clearRecording();
-        setRecordingUrl(null);
-
-        // Start reference video
-        if (videoPlayerRef.current) {
-            videoPlayerRef.current.seekTo(0);
-            videoPlayerRef.current.play();
-        }
-
-        // If video mode, start user video in sync
-        if (inputMode === 'video' && userVideoRef.current) {
-            userVideoRef.current.seekTo(0);
-            userVideoRef.current.play();
-        }
-
-        // Start recording webcam composite (video + skeleton overlay)
-        if (inputMode === 'webcam') {
-            setTimeout(() => {
-                const videoEl = webcamRef.current?.getVideoEl();
-                const canvasEl = webcamRef.current?.getCanvasEl();
-                if (videoEl) startRecording(videoEl, canvasEl);
-            }, 800);
-        }
-
-        // Session timer
-        sessionTimerRef.current = setInterval(() => {
-            setSessionTime(t => t + 1);
-        }, 1000);
-
-        // Comparison loop — compare poses every ~100ms
-        comparisonLoopRef.current = setInterval(() => {
-            const refPose = videoPlayerRef.current?.getCurrentPose();
-            const userRef = inputMode === 'video' ? userVideoRef : webcamRef;
-            const userPose = userRef.current?.getCurrentPose();
-
-            if (refPose && userPose) {
-                const result = comparePoses(refPose, userPose);
-                if (result) {
-                    setComparison(result);
-                    generateVoiceCue(result, refPose, userPose);
-
-                    sampleCountRef.current++;
-                    if (sampleCountRef.current % 3 === 0) {
-                        setSessionData(prev => {
-                            const next = [...prev, result];
-                            sessionDataRef.current = next;
-                            return next;
-                        });
-                    }
-                }
-            }
-        }, 100);
-    }, [inputMode]);
-
-    // Use a ref so handleStop always sees latest sessionData
     const sessionDataRef = useRef([]);
+    const sampleCountRef = useRef(0);
+    const stoppingRef = useRef(false);
 
-    const handleStop = useCallback(async () => {
-        resetAudioCoach();
-
-        // Stop timers and comparison FIRST
+    const clearSessionLoops = useCallback(() => {
         if (comparisonLoopRef.current) {
             clearInterval(comparisonLoopRef.current);
             comparisonLoopRef.current = null;
@@ -136,58 +66,195 @@ export default function App() {
             clearInterval(sessionTimerRef.current);
             sessionTimerRef.current = null;
         }
+    }, []);
+
+    useEffect(() => {
+        setAudioCoachEnabled(voiceCoach && !coachMuted);
+    }, [voiceCoach, coachMuted]);
+
+    useEffect(() => {
+        setAudioCoachVolume(coachMuted ? 0 : coachVolume);
+    }, [coachMuted, coachVolume]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem('improve_ai_xp', String(Math.max(0, Math.floor(xp))));
+        } catch {
+            // ignore storage errors
+        }
+    }, [xp]);
+
+    const handleFileUpload = useCallback((file) => {
+        if (!file || !file.type.startsWith('video/')) return;
+        setVideoFile(file);
+        setVideoName(file.name);
+        setComparison(null);
+        setSessionTime(0);
+        setSessionData([]);
+        sessionDataRef.current = [];
+        setIsActive(false);
+        setView(VIEWS.PRACTICE);
+        setStatusMessage('Reference loaded. Press Start when ready.');
+    }, []);
+
+    const handleRefFileInput = (e) => {
+        const file = e.target.files?.[0];
+        if (file) handleFileUpload(file);
+    };
+
+    const handleUserVideoUpload = (e) => {
+        const file = e.target.files?.[0];
+        if (!file || !file.type.startsWith('video/')) return;
+        setUserVideoFile(file);
+        setInputMode('video');
+        setStatusMessage('Your video is loaded and ready for synchronized playback.');
+    };
+
+    const handleStart = useCallback(() => {
+        if (!videoFile) {
+            setStatusMessage('Upload a reference video first.');
+            return;
+        }
+
+        if (inputMode === 'video' && !userVideoFile) {
+            setStatusMessage('Upload your own video or switch to webcam mode.');
+            return;
+        }
+
+        setView(VIEWS.PRACTICE);
+        setIsActive(true);
+        setSessionData([]);
+        sessionDataRef.current = [];
+        setComparison(null);
+        setSessionTime(0);
+        setCombo(0);
+        sampleCountRef.current = 0;
+        stoppingRef.current = false;
+        resetAudioCoach();
+        initVoices();
+        clearRecording();
+        setRecordingUrl(null);
+        setStatusMessage('Session live. Match timing and body shape.');
 
         if (videoPlayerRef.current) {
-            videoPlayerRef.current.pause();
-        }
-        if (userVideoRef.current) {
-            userVideoRef.current.pause();
+            videoPlayerRef.current.seekTo(0);
+            videoPlayerRef.current.play();
         }
 
-        // Stop recording BEFORE killing the webcam stream
+        if (inputMode === 'video' && userVideoRef.current) {
+            userVideoRef.current.seekTo(0);
+            userVideoRef.current.play();
+        }
+
+        if (inputMode === 'webcam') {
+            setTimeout(() => {
+                const videoEl = webcamRef.current?.getVideoEl();
+                const canvasEl = webcamRef.current?.getCanvasEl();
+                if (videoEl) startRecording(videoEl, canvasEl);
+            }, 700);
+        }
+
+        clearSessionLoops();
+
+        sessionTimerRef.current = setInterval(() => {
+            setSessionTime((t) => t + 1);
+        }, 1000);
+
+        comparisonLoopRef.current = setInterval(() => {
+            const refPose = videoPlayerRef.current?.getCurrentPose();
+            const userSourceRef = inputMode === 'video' ? userVideoRef : webcamRef;
+            const userPose = userSourceRef.current?.getCurrentPose();
+
+            if (!refPose || !userPose) return;
+
+            const result = comparePoses(refPose, userPose);
+            if (!result) return;
+
+            setComparison(result);
+            generateVoiceCue(result, refPose, userPose);
+
+            sampleCountRef.current += 1;
+            if (sampleCountRef.current % 5 !== 0) return;
+
+            const frame = {
+                ...result,
+                refLandmarks: refPose,
+                userLandmarks: userPose,
+            };
+
+            setSessionData((prev) => {
+                const next = [...prev, frame];
+                sessionDataRef.current = next;
+                return next;
+            });
+
+            const gain =
+                result.overall >= 85 ? 5 :
+                    result.overall >= 70 ? 3 :
+                        result.overall >= 55 ? 2 : 1;
+            setXp((prev) => prev + gain);
+            setCombo((prev) => (result.overall >= 68 ? prev + 1 : 0));
+        }, 120);
+    }, [clearSessionLoops, inputMode, userVideoFile, videoFile]);
+
+    const handleStop = useCallback(async () => {
+        if (stoppingRef.current) return;
+        stoppingRef.current = true;
+
+        resetAudioCoach();
+        clearSessionLoops();
+
+        if (videoPlayerRef.current) videoPlayerRef.current.pause();
+        if (userVideoRef.current) userVideoRef.current.pause();
+
         const recUrl = await stopRecording();
         if (recUrl) setRecordingUrl(recUrl);
 
-        // NOW deactivate webcam (kills stream)
         setIsActive(false);
+        setView(VIEWS.SUMMARY);
+        setStatusMessage('Session ended. Review your analytics and replay weak moments.');
+        stoppingRef.current = false;
+    }, [clearSessionLoops]);
 
-        // Show summary if we have enough data (use ref for latest)
-        if (sessionDataRef.current.length > 5) {
-            setView(VIEWS.SUMMARY);
-        }
-    }, []); // No dependencies — uses refs
-
-    // Cleanup on unmount
     useEffect(() => {
         return () => {
-            if (comparisonLoopRef.current) clearInterval(comparisonLoopRef.current);
-            if (sessionTimerRef.current) clearInterval(sessionTimerRef.current);
+            clearSessionLoops();
+            resetAudioCoach();
         };
-    }, []);
+    }, [clearSessionLoops]);
 
-    // Auto-stop when reference video ends
     useEffect(() => {
         if (!isActive) return;
 
         const checkEnd = setInterval(() => {
-            const video = videoPlayerRef.current?.getVideo();
-            if (video && video.ended) {
+            const refVideo = videoPlayerRef.current?.getVideo();
+            if (refVideo && refVideo.ended) {
                 handleStop();
             }
-        }, 500);
+        }, 400);
 
         return () => clearInterval(checkEnd);
-    }, [isActive, handleStop]);
+    }, [handleStop, isActive]);
 
-    const formatTime = (s) => {
-        const m = Math.floor(s / 60);
-        const sec = s % 60;
-        return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    const formatTime = (seconds) => {
+        const minutes = Math.floor(seconds / 60);
+        const sec = seconds % 60;
+        return `${minutes.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    };
+
+    const startDisabled = !videoFile || (inputMode === 'video' && !userVideoFile);
+    const baseUrl = import.meta.env.BASE_URL || '/';
+
+    const toggleCoachVoice = () => {
+        if (coachMuted) {
+            setCoachMuted(false);
+            return;
+        }
+        setVoiceCoach((prev) => !prev);
     };
 
     return (
         <div className="app">
-            {/* Header */}
             <header className="app-header">
                 <div className="logo">
                     <div className="logo-icon">💃</div>
@@ -198,91 +265,35 @@ export default function App() {
                 </div>
                 <nav className="nav">
                     <button
-                        className={`nav-btn ${view === VIEWS.WELCOME ? 'active' : ''}`}
-                        onClick={() => { setIsActive(false); setView(VIEWS.WELCOME); }}
-                    >Home</button>
+                        className="nav-btn"
+                        onClick={() => {
+                            if (isActive) handleStop();
+                            window.location.href = baseUrl;
+                        }}
+                    >
+                        Home
+                    </button>
                     <button
                         className={`nav-btn ${view === VIEWS.PRACTICE ? 'active' : ''}`}
-                        onClick={() => videoFile && setView(VIEWS.PRACTICE)}
-                    >Practice</button>
+                        onClick={() => setView(VIEWS.PRACTICE)}
+                    >
+                        Practice
+                    </button>
                 </nav>
             </header>
 
-            {/* ─── Welcome ─── */}
-            {view === VIEWS.WELCOME && (
-                <div className="welcome fade-in" id="welcome">
-                    <div className="welcome-icon">💃</div>
-                    <h1 className="welcome-title">Improve.ai Coach Studio</h1>
-                    <p className="welcome-sub">
-                        See yourself dance better — in real time. Upload any dance video, and our AI will
-                        compare your movements body-part by body-part, showing you exactly where to improve.
-                        No app install needed, all AI runs in your browser.
-                    </p>
-
-                    <div className="features">
-                        <div className="card feature">
-                            <div className="feature-icon">🎯</div>
-                            <div className="feature-title">Body-Part Scoring</div>
-                            <div className="feature-desc">See exactly which limbs match and which need work — arms, legs, torso, head</div>
-                        </div>
-                        <div className="card feature">
-                            <div className="feature-icon">⚡</div>
-                            <div className="feature-title">Real-Time Feedback</div>
-                            <div className="feature-desc">Live side-by-side comparison at 20+ FPS with color-coded skeleton</div>
-                        </div>
-                        <div className="card feature">
-                            <div className="feature-icon">🔒</div>
-                            <div className="feature-title">Privacy First</div>
-                            <div className="feature-desc">All AI runs in your browser — your video never leaves your device</div>
-                        </div>
-                    </div>
-
-                    {/* Upload zone */}
-                    <div
-                        className={`upload-zone ${dragging ? 'dragging' : ''}`}
-                        onClick={() => document.getElementById('file-input').click()}
-                        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                        onDragLeave={() => setDragging(false)}
-                        onDrop={handleDrop}
-                        id="upload-zone"
-                    >
-                        <div className="upload-icon">📁</div>
-                        <div className="upload-text">Drop a dance video here</div>
-                        <div className="upload-hint">or click to browse • MP4, MOV, WebM</div>
-                        <input
-                            id="file-input"
-                            type="file"
-                            accept="video/*"
-                            onChange={handleFileInput}
-                            style={{ display: 'none' }}
-                        />
-                    </div>
-
-                    <div style={{
-                        marginTop: '40px',
-                        display: 'flex',
-                        gap: '28px',
-                        fontSize: '13px',
-                        color: 'var(--text-muted)',
-                        flexWrap: 'wrap',
-                        justifyContent: 'center'
-                    }}>
-                        <div>🆓 100% free to use</div>
-                        <div>📷 Just a webcam needed</div>
-                        <div>🧠 33-point body tracking</div>
-                    </div>
-                </div>
-            )}
-
-            {/* ─── Practice ─── */}
             {view === VIEWS.PRACTICE && (
                 <div className="fade-in">
-                    {/* Split screen */}
                     <div className="split-screen">
                         <VideoPlayer
                             ref={videoPlayerRef}
                             videoFile={videoFile}
                             speed={speed}
+                            muted={referenceMuted}
+                            volume={referenceVolume}
+                            onToggleMute={() => setReferenceMuted((m) => !m)}
+                            onVolumeDown={() => setReferenceVolume((v) => clampVolume(v - 0.1))}
+                            onVolumeUp={() => setReferenceVolume((v) => clampVolume(v + 0.1))}
                         />
                         {inputMode === 'webcam' ? (
                             <WebcamFeed
@@ -290,6 +301,10 @@ export default function App() {
                                 isActive={isActive}
                                 segmentScores={comparison?.segments}
                                 mirrored={mirrored}
+                                coachMuted={coachMuted || !voiceCoach}
+                                onToggleCoachMute={() => setCoachMuted((m) => !m)}
+                                onCoachVolumeDown={() => setCoachVolume((v) => clampVolume(v - 0.1))}
+                                onCoachVolumeUp={() => setCoachVolume((v) => clampVolume(v + 0.1))}
                             />
                         ) : (
                             <UserVideo
@@ -298,33 +313,37 @@ export default function App() {
                                 isActive={isActive}
                                 segmentScores={comparison?.segments}
                                 speed={speed}
+                                coachMuted={coachMuted || !voiceCoach}
+                                onToggleCoachMute={() => setCoachMuted((m) => !m)}
+                                onCoachVolumeDown={() => setCoachVolume((v) => clampVolume(v - 0.1))}
+                                onCoachVolumeUp={() => setCoachVolume((v) => clampVolume(v + 0.1))}
                             />
                         )}
                     </div>
 
-                    {/* Score Display */}
                     <ScoreDisplay comparison={comparison} />
 
-                    {/* Controls */}
                     <div className="controls-bar card" style={{ padding: '12px 20px' }}>
                         <div className="controls-group">
                             {isActive ? (
                                 <button className="btn btn-danger" onClick={handleStop} id="stop-btn">
-                                    ⏹ Stop Session
+                                    ⏹ End Session
                                 </button>
                             ) : (
-                                <button className="btn btn-primary btn-lg" onClick={handleStart} id="start-btn">
+                                <button
+                                    className="btn btn-primary btn-lg"
+                                    onClick={handleStart}
+                                    id="start-btn"
+                                    disabled={startDisabled}
+                                    style={{ opacity: startDisabled ? 0.6 : 1 }}
+                                >
                                     ▶ Start Dancing
                                 </button>
                             )}
 
-                            {/* New ref video */}
                             <button
                                 className="btn btn-outline"
-                                onClick={() => {
-                                    setIsActive(false);
-                                    document.getElementById('file-input-practice').click();
-                                }}
+                                onClick={() => document.getElementById('file-input-practice')?.click()}
                             >
                                 📁 Ref Video
                             </button>
@@ -332,102 +351,86 @@ export default function App() {
                                 id="file-input-practice"
                                 type="file"
                                 accept="video/*"
-                                onChange={handleFileInput}
+                                onChange={handleRefFileInput}
                                 style={{ display: 'none' }}
                             />
 
-                            {/* Input mode toggle */}
-                            <div style={{
-                                display: 'flex', borderRadius: '10px', overflow: 'hidden',
-                                border: '1px solid var(--border)', fontSize: '13px'
-                            }}>
+                            <div className="mode-toggle">
                                 <button
-                                    style={{
-                                        padding: '6px 14px', border: 'none', cursor: 'pointer',
-                                        background: inputMode === 'webcam' ? 'var(--accent-1)' : 'transparent',
-                                        color: inputMode === 'webcam' ? '#fff' : 'var(--text-muted)',
-                                        fontWeight: inputMode === 'webcam' ? 600 : 400, fontFamily: 'var(--font)',
-                                    }}
+                                    className={`mode-btn ${inputMode === 'webcam' ? 'active' : ''}`}
                                     onClick={() => setInputMode('webcam')}
-                                >📷 Webcam</button>
+                                >
+                                    📷 Webcam
+                                </button>
                                 <button
-                                    style={{
-                                        padding: '6px 14px', border: 'none', cursor: 'pointer',
-                                        borderLeft: '1px solid var(--border)',
-                                        background: inputMode === 'video' ? 'var(--accent-1)' : 'transparent',
-                                        color: inputMode === 'video' ? '#fff' : 'var(--text-muted)',
-                                        fontWeight: inputMode === 'video' ? 600 : 400, fontFamily: 'var(--font)',
-                                    }}
+                                    className={`mode-btn ${inputMode === 'video' ? 'active' : ''}`}
                                     onClick={() => {
                                         setInputMode('video');
-                                        if (!userVideoFile) document.getElementById('user-video-input').click();
+                                        if (!userVideoFile) document.getElementById('user-video-input')?.click();
                                     }}
-                                >📤 Upload Video</button>
+                                >
+                                    📤 Upload Video
+                                </button>
                             </div>
                             <input
                                 id="user-video-input"
                                 type="file"
                                 accept="video/*"
-                                onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    if (f) { setUserVideoFile(f); setInputMode('video'); }
-                                }}
+                                onChange={handleUserVideoUpload}
                                 style={{ display: 'none' }}
                             />
                         </div>
 
                         <div className="controls-group">
-                            {/* Speed */}
-                            {[0.5, 0.75, 1].map(s => (
+                            {[0.5, 0.75, 1].map((value) => (
                                 <button
-                                    key={s}
-                                    className={`speed-btn ${speed === s ? 'active' : ''}`}
-                                    onClick={() => setSpeed(s)}
+                                    key={value}
+                                    className={`speed-btn ${speed === value ? 'active' : ''}`}
+                                    onClick={() => setSpeed(value)}
                                 >
-                                    {s}×
+                                    {value}×
                                 </button>
                             ))}
 
-                            {/* Mirror */}
                             <button
                                 className={`toggle-btn ${mirrored ? 'active' : ''}`}
-                                onClick={() => setMirrored(!mirrored)}
+                                onClick={() => setMirrored((m) => !m)}
                             >
                                 🪞 Mirror
                             </button>
 
-                            {/* Voice Coach */}
                             <button
-                                className={`toggle-btn ${voiceCoach ? 'active' : ''}`}
-                                onClick={() => {
-                                    const next = !voiceCoach;
-                                    setVoiceCoach(next);
-                                    setAudioCoachEnabled(next);
-                                }}
+                                className={`toggle-btn ${(voiceCoach && !coachMuted) ? 'active' : ''}`}
+                                onClick={toggleCoachVoice}
+                                title="Toggle voice coach"
                             >
-                                {voiceCoach ? '🔊' : '🔇'} Voice Coach
+                                {(voiceCoach && !coachMuted) ? '🎙 Coach' : '🎙 Muted'}
                             </button>
                         </div>
 
-                        <div className="controls-group">
+                        <div className="controls-group controls-meta">
                             {isActive && <span className="timer">⏱ {formatTime(sessionTime)}</span>}
+                            <span className="meta-pill">XP {Math.floor(xp)}</span>
+                            <span className="meta-pill combo-pill">Combo x{combo}</span>
                             {videoName && (
-                                <span style={{ fontSize: '13px', color: 'var(--text-muted)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span className="track-name">
                                     🎵 {videoName}
                                 </span>
                             )}
                         </div>
                     </div>
+
+                    <p className="status-line">{statusMessage}</p>
                 </div>
             )}
 
-            {/* ─── Summary ─── */}
             {view === VIEWS.SUMMARY && (
                 <SessionSummary
                     sessionData={sessionData}
                     onClose={() => setView(VIEWS.PRACTICE)}
                     recordingUrl={recordingUrl}
                     videoFile={videoFile}
+                    userVideoFile={userVideoFile}
                 />
             )}
         </div>

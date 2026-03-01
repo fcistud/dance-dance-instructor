@@ -2,14 +2,23 @@ import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHand
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import { drawSkeleton, smoothLandmarks, resetSmoothing, isPoseValid } from '../utils/skeletonRenderer';
 
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 
 /**
  * UserVideo — Loads an uploaded video of the user dancing, runs pose detection,
  * draws color-coded skeleton. Used as alternative to webcam for analysis mode.
  */
-const UserVideo = forwardRef(function UserVideo({ videoFile, isActive, segmentScores, speed }, ref) {
+const UserVideo = forwardRef(function UserVideo({
+    videoFile,
+    isActive,
+    segmentScores,
+    speed,
+    coachMuted,
+    onToggleCoachMute,
+    onCoachVolumeDown,
+    onCoachVolumeUp
+}, ref) {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const landmarkerRef = useRef(null);
@@ -37,14 +46,26 @@ const UserVideo = forwardRef(function UserVideo({ videoFile, isActive, segmentSc
             try {
                 setLoading(true);
                 const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-                const landmarker = await PoseLandmarker.createFromOptions(vision, {
-                    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-                    runningMode: 'VIDEO',
-                    numPoses: 1,
-                    minPoseDetectionConfidence: 0.5,
-                    minPosePresenceConfidence: 0.5,
-                    minTrackingConfidence: 0.5
-                });
+                let landmarker = null;
+                try {
+                    landmarker = await PoseLandmarker.createFromOptions(vision, {
+                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+                        runningMode: 'VIDEO',
+                        numPoses: 1,
+                        minPoseDetectionConfidence: 0.6,
+                        minPosePresenceConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+                } catch {
+                    landmarker = await PoseLandmarker.createFromOptions(vision, {
+                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+                        runningMode: 'VIDEO',
+                        numPoses: 1,
+                        minPoseDetectionConfidence: 0.6,
+                        minPosePresenceConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+                }
                 landmarkerRef.current = landmarker;
                 setLoading(false);
             } catch (err) {
@@ -63,10 +84,19 @@ const UserVideo = forwardRef(function UserVideo({ videoFile, isActive, segmentSc
 
     // Load video
     useEffect(() => {
-        if (!videoFile || !videoRef.current) return;
+        const video = videoRef.current;
+        if (!video) return;
+
+        if (!videoFile) {
+            video.removeAttribute('src');
+            video.load();
+            currentPoseRef.current = null;
+            return;
+        }
+
         const url = URL.createObjectURL(videoFile);
-        videoRef.current.src = url;
-        videoRef.current.load();
+        video.src = url;
+        video.load();
         resetSmoothing('userVideo');
         return () => URL.revokeObjectURL(url);
     }, [videoFile]);
@@ -123,7 +153,7 @@ const UserVideo = forwardRef(function UserVideo({ videoFile, isActive, segmentSc
 
     // Start/stop detection when video plays
     useEffect(() => {
-        if (!videoFile || loading) return;
+        if (loading) return;
         const video = videoRef.current;
         if (!video) return;
 
@@ -142,9 +172,7 @@ const UserVideo = forwardRef(function UserVideo({ videoFile, isActive, segmentSc
             video.removeEventListener('ended', onPause);
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
         };
-    }, [videoFile, loading, detectPose]);
-
-    if (!videoFile) return null;
+    }, [loading, detectPose]);
 
     return (
         <div className="video-panel" id="user-video">
@@ -152,11 +180,25 @@ const UserVideo = forwardRef(function UserVideo({ videoFile, isActive, segmentSc
             <canvas ref={canvasRef} />
 
             <span className="panel-label user">🎥 Your Video</span>
+            <div className="panel-audio">
+                <button type="button" className="audio-icon-btn" onClick={onToggleCoachMute} title="Mute coach voice">
+                    {coachMuted ? '🔇' : '🎙'}
+                </button>
+                <button type="button" className="audio-icon-btn" onClick={onCoachVolumeDown} title="Lower coach volume">−</button>
+                <button type="button" className="audio-icon-btn" onClick={onCoachVolumeUp} title="Raise coach volume">+</button>
+            </div>
+
+            {!videoFile && !loading && !error && (
+                <div className="loading-overlay" style={{ background: 'rgba(0,0,0,0.76)' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>📤</div>
+                    <div className="loading-text">Upload your video to compare</div>
+                </div>
+            )}
 
             {loading && (
                 <div className="loading-overlay">
                     <div className="spinner" />
-                    <div className="loading-text">Loading AI Model...</div>
+                    <div className="loading-text">Loading pose model...</div>
                 </div>
             )}
             {error && (

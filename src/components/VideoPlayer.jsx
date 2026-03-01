@@ -1,15 +1,23 @@
 import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import { drawSkeleton, smoothLandmarks, resetSmoothing } from '../utils/skeletonRenderer';
+import { drawSkeleton, smoothLandmarks, resetSmoothing, isPoseValid } from '../utils/skeletonRenderer';
 
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 
 /**
  * Reference Video Player — loads a video file, extracts poses from each frame, draws skeleton.
  * Exposes getCurrentPose() for the parent to use for comparison.
  */
-const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesReady }, ref) {
+const VideoPlayer = forwardRef(function VideoPlayer({
+    videoFile,
+    speed,
+    muted,
+    volume,
+    onToggleMute,
+    onVolumeDown,
+    onVolumeUp
+}, ref) {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const landmarkerRef = useRef(null);
@@ -18,8 +26,6 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesR
     const currentPoseRef = useRef(null);
 
     const [loading, setLoading] = useState(true);
-    const [extracting, setExtracting] = useState(false);
-    const [extractProgress, setExtractProgress] = useState(0);
     const [error, setError] = useState(null);
 
     // Expose getCurrentPose to parent
@@ -40,14 +46,26 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesR
             try {
                 setLoading(true);
                 const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-                const landmarker = await PoseLandmarker.createFromOptions(vision, {
-                    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-                    runningMode: 'VIDEO',
-                    numPoses: 1,
-                    minPoseDetectionConfidence: 0.5,
-                    minPosePresenceConfidence: 0.5,
-                    minTrackingConfidence: 0.5
-                });
+                let landmarker = null;
+                try {
+                    landmarker = await PoseLandmarker.createFromOptions(vision, {
+                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+                        runningMode: 'VIDEO',
+                        numPoses: 1,
+                        minPoseDetectionConfidence: 0.6,
+                        minPosePresenceConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+                } catch {
+                    landmarker = await PoseLandmarker.createFromOptions(vision, {
+                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+                        runningMode: 'VIDEO',
+                        numPoses: 1,
+                        minPoseDetectionConfidence: 0.6,
+                        minPosePresenceConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+                }
                 landmarkerRef.current = landmarker;
                 setLoading(false);
             } catch (err) {
@@ -66,10 +84,17 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesR
 
     // Load video file
     useEffect(() => {
-        if (!videoFile || !videoRef.current) return;
+        const video = videoRef.current;
+        if (!video) return;
+
+        if (!videoFile) {
+            video.removeAttribute('src');
+            video.load();
+            currentPoseRef.current = null;
+            return;
+        }
 
         const url = URL.createObjectURL(videoFile);
-        const video = videoRef.current;
         video.src = url;
         video.load();
         resetSmoothing('ref');
@@ -83,6 +108,12 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesR
             videoRef.current.playbackRate = speed || 1;
         }
     }, [speed]);
+
+    useEffect(() => {
+        if (!videoRef.current) return;
+        videoRef.current.muted = Boolean(muted);
+        videoRef.current.volume = typeof volume === 'number' ? volume : 0.8;
+    }, [muted, volume]);
 
     // Real-time detection loop (runs during playback)
     const detectPose = useCallback(() => {
@@ -114,8 +145,14 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesR
 
             if (result.landmarks && result.landmarks.length > 0) {
                 const landmarks = smoothLandmarks(result.landmarks[0], 'ref');
-                currentPoseRef.current = landmarks;
-                drawSkeleton(ctx, landmarks, canvas.width, canvas.height, null, '#38bdf8');
+                if (isPoseValid(landmarks)) {
+                    currentPoseRef.current = landmarks;
+                    drawSkeleton(ctx, landmarks, canvas.width, canvas.height, null, '#ff9f40');
+                } else {
+                    currentPoseRef.current = null;
+                }
+            } else {
+                currentPoseRef.current = null;
             }
         } catch (err) {
             // Timing errors — ignore
@@ -126,7 +163,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesR
 
     // Start detection loop when video plays
     useEffect(() => {
-        if (!videoFile || loading) return;
+        if (loading) return;
         const video = videoRef.current;
         if (!video) return;
 
@@ -150,26 +187,37 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoFile, speed, onPosesR
             video.removeEventListener('ended', onPause);
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
         };
-    }, [videoFile, loading, detectPose]);
-
-    if (!videoFile) return null;
+    }, [loading, detectPose]);
 
     return (
         <div className="video-panel" id="ref-video">
             <video
                 ref={videoRef}
                 playsInline
-                muted
                 style={{ background: '#000' }}
             />
             <canvas ref={canvasRef} />
 
             <span className="panel-label ref">📹 Reference</span>
+            <div className="panel-audio">
+                <button type="button" className="audio-icon-btn" onClick={onToggleMute} title="Mute reference audio">
+                    {muted ? '🔇' : '🔊'}
+                </button>
+                <button type="button" className="audio-icon-btn" onClick={onVolumeDown} title="Lower reference volume">−</button>
+                <button type="button" className="audio-icon-btn" onClick={onVolumeUp} title="Raise reference volume">+</button>
+            </div>
+
+            {!videoFile && !loading && !error && (
+                <div className="loading-overlay" style={{ background: 'rgba(0,0,0,0.76)' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>📁</div>
+                    <div className="loading-text">Upload a reference video</div>
+                </div>
+            )}
 
             {loading && (
                 <div className="loading-overlay">
                     <div className="spinner" />
-                    <div className="loading-text">Loading AI Model...</div>
+                    <div className="loading-text">Loading pose model...</div>
                 </div>
             )}
 

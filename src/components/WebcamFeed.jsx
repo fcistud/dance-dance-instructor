@@ -2,14 +2,22 @@ import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHand
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import { drawSkeleton, smoothLandmarks, resetSmoothing, isPoseValid } from '../utils/skeletonRenderer';
 
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 
 /**
  * Webcam Feed — captures user's webcam, runs pose detection,
  * draws color-coded skeleton based on comparison scores.
  */
-const WebcamFeed = forwardRef(function WebcamFeed({ isActive, segmentScores, mirrored }, ref) {
+const WebcamFeed = forwardRef(function WebcamFeed({
+    isActive,
+    segmentScores,
+    mirrored,
+    coachMuted,
+    onToggleCoachMute,
+    onCoachVolumeDown,
+    onCoachVolumeUp
+}, ref) {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const landmarkerRef = useRef(null);
@@ -37,14 +45,26 @@ const WebcamFeed = forwardRef(function WebcamFeed({ isActive, segmentScores, mir
             try {
                 setLoading(true);
                 const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-                const landmarker = await PoseLandmarker.createFromOptions(vision, {
-                    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-                    runningMode: 'VIDEO',
-                    numPoses: 1,
-                    minPoseDetectionConfidence: 0.5,
-                    minPosePresenceConfidence: 0.5,
-                    minTrackingConfidence: 0.5
-                });
+                let landmarker = null;
+                try {
+                    landmarker = await PoseLandmarker.createFromOptions(vision, {
+                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+                        runningMode: 'VIDEO',
+                        numPoses: 1,
+                        minPoseDetectionConfidence: 0.6,
+                        minPosePresenceConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+                } catch {
+                    landmarker = await PoseLandmarker.createFromOptions(vision, {
+                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+                        runningMode: 'VIDEO',
+                        numPoses: 1,
+                        minPoseDetectionConfidence: 0.6,
+                        minPosePresenceConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+                }
                 landmarkerRef.current = landmarker;
                 setLoading(false);
             } catch (err) {
@@ -173,11 +193,18 @@ const WebcamFeed = forwardRef(function WebcamFeed({ isActive, segmentScores, mir
                     </>
                 )}
             </div>
+            <div className="panel-audio">
+                <button type="button" className="audio-icon-btn" onClick={onToggleCoachMute} title="Mute coach voice">
+                    {coachMuted ? '🔇' : '🎙'}
+                </button>
+                <button type="button" className="audio-icon-btn" onClick={onCoachVolumeDown} title="Lower coach volume">−</button>
+                <button type="button" className="audio-icon-btn" onClick={onCoachVolumeUp} title="Raise coach volume">+</button>
+            </div>
 
             {loading && (
                 <div className="loading-overlay">
                     <div className="spinner" />
-                    <div className="loading-text">Loading AI Model...</div>
+                    <div className="loading-text">Loading pose model...</div>
                 </div>
             )}
 

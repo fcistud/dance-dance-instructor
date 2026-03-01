@@ -54,7 +54,7 @@ export function drawSkeleton(ctx, landmarks, w, h, segmentScores = null, uniform
             const start = landmarks[startIdx];
             const end = landmarks[endIdx];
 
-            if ((start.visibility || 0) < 0.4 || (end.visibility || 0) < 0.4) continue;
+            if ((start.visibility || 0) < 0.55 || (end.visibility || 0) < 0.55) continue;
 
             ctx.beginPath();
             ctx.moveTo(start.x * w, start.y * h);
@@ -72,7 +72,7 @@ export function drawSkeleton(ctx, landmarks, w, h, segmentScores = null, uniform
         if (SKIP.has(i)) continue;
 
         const lm = landmarks[i];
-        if ((lm.visibility || 0) < 0.4) continue;
+        if ((lm.visibility || 0) < 0.55) continue;
 
         const x = lm.x * w;
         const y = lm.y * h;
@@ -119,6 +119,9 @@ const histories = { ref: [], user: [] };
 export function smoothLandmarks(landmarks, channel = 'user') {
     if (!landmarks || landmarks.length === 0) return landmarks;
 
+    if (!histories[channel]) {
+        histories[channel] = [];
+    }
     const history = histories[channel];
     history.push(landmarks.map(l => ({ ...l })));
 
