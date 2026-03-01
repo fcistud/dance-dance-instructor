@@ -122,7 +122,12 @@ const el = {
 };
 
 const state = {
-  poseLandmarker: null,
+  poseLandmarkerTarget: null,
+  poseLandmarkerUser: null,
+  poseTimestampMs: {
+    target: 0,
+    user: 0
+  },
   sessionActive: false,
   paused: false,
   frameId: 0,
@@ -173,6 +178,9 @@ const MAX_BUFFER_SECONDS = 8;
 const TIMING_UPDATE_INTERVAL_SECONDS = 0.75;
 const TIP_COOLDOWN_SECONDS = 1.35;
 const PERFECT_HIT_THRESHOLD = 88;
+const MIN_LANDMARK_VISIBILITY = 0.24;
+const MIN_TARGET_COVERAGE = 0.34;
+const MIN_USER_COVERAGE = 0.3;
 const CHART_PAD = { left: 42, right: 18, top: 18, bottom: 34 };
 const LOCAL_LEADERBOARD_KEY = "improveai.leaderboard.v1";
 
@@ -497,18 +505,30 @@ async function initializePose() {
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
   );
 
-  state.poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+  const poseOptions = {
     baseOptions: {
       modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task",
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
       delegate: "GPU"
     },
     runningMode: "VIDEO",
     numPoses: 1,
-    minPoseDetectionConfidence: 0.5,
-    minPosePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5
-  });
+    minPoseDetectionConfidence: 0.35,
+    minPosePresenceConfidence: 0.35,
+    minTrackingConfidence: 0.35
+  };
+  try {
+    state.poseLandmarkerTarget = await PoseLandmarker.createFromOptions(vision, poseOptions);
+    state.poseLandmarkerUser = await PoseLandmarker.createFromOptions(vision, poseOptions);
+  } catch (gpuError) {
+    console.warn("GPU delegate unavailable, retrying on CPU.", gpuError);
+    const cpuOptions = {
+      ...poseOptions,
+      baseOptions: { ...poseOptions.baseOptions, delegate: "CPU" }
+    };
+    state.poseLandmarkerTarget = await PoseLandmarker.createFromOptions(vision, cpuOptions);
+    state.poseLandmarkerUser = await PoseLandmarker.createFromOptions(vision, cpuOptions);
+  }
   setStatus(el.targetStatus, "Model ready", "ok");
 }
 
@@ -636,7 +656,7 @@ function applyMirrorMode() {
 }
 
 async function startSession() {
-  if (!state.poseLandmarker) {
+  if (!state.poseLandmarkerTarget || !state.poseLandmarkerUser) {
     logCoach("Pose model still loading.", true);
     return;
   }
@@ -707,6 +727,7 @@ function resetSessionData() {
   state.perfectHits = 0;
   state.comboMilestonesSeen = new Set();
   state.sessionScoreCard = null;
+  state.poseTimestampMs = { target: 0, user: 0 };
 
   el.liveScore.textContent = "0%";
   el.qualityBand.textContent = "Warm-up";
@@ -818,20 +839,20 @@ function runLoop() {
   state.sessionDuration = (now - state.startTimestamp) / 1000;
   el.sessionTime.textContent = formatTime(state.sessionDuration);
 
-  const targetResult = detectPose(el.targetVideo);
-  const userResult = detectPose(el.userVideo);
+  const targetResult = detectPose(el.targetVideo, "target");
+  const userResult = detectPose(el.userVideo, "user");
 
   state.targetLandmarks = targetResult;
   state.userLandmarks = userResult;
 
-  drawPose(el.targetCanvas, targetResult);
-  drawPose(el.userCanvas, userResult);
+  drawPose(el.targetVideo, el.targetCanvas, targetResult);
+  drawPose(el.userVideo, el.userCanvas, userResult);
 
   if (targetResult && userResult && now - state.lastSampleAt >= SAMPLE_INTERVAL_MS) {
     state.lastSampleAt = now;
     const targetCoverage = landmarkCoverage(targetResult);
     const userCoverage = landmarkCoverage(userResult);
-    if (targetCoverage < 0.45 || userCoverage < 0.45) {
+    if (targetCoverage < MIN_TARGET_COVERAGE || userCoverage < MIN_USER_COVERAGE) {
       if (state.sessionDuration - state.lastCoachAt > 2.8) {
         logCoach("Step fully into frame so shoulders, hips, knees and ankles are visible.", true);
         state.lastCoachAt = state.sessionDuration;
@@ -949,25 +970,83 @@ function timingAlignmentScore(offset, currentTime) {
   return count ? scoreSum / count : -Infinity;
 }
 
-function detectPose(videoEl) {
-  if (!state.poseLandmarker || videoEl.readyState < 2) {
+function detectPose(videoEl, streamKey) {
+  const landmarker =
+    streamKey === "target" ? state.poseLandmarkerTarget : state.poseLandmarkerUser;
+  if (!landmarker || videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) {
     return null;
   }
 
-  const ts = performance.now();
-  const result = state.poseLandmarker.detectForVideo(videoEl, ts);
+  const ts = nextPoseTimestamp(videoEl, streamKey);
+  let result = null;
+  try {
+    result = landmarker.detectForVideo(videoEl, ts);
+  } catch (error) {
+    console.warn(`Pose detect failed for ${streamKey}.`, error);
+    return null;
+  }
   if (!result.landmarks || !result.landmarks[0]) {
     return null;
   }
   return result.landmarks[0];
 }
 
-function drawPose(canvasEl, landmarks) {
+function nextPoseTimestamp(videoEl, streamKey) {
+  const mediaTimeMs = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime * 1000 : NaN;
+  let ts = Number.isFinite(mediaTimeMs) && mediaTimeMs > 0 ? mediaTimeMs : performance.now();
+  const last = state.poseTimestampMs[streamKey] || 0;
+  if (ts <= last) {
+    ts = last + 1;
+  }
+  state.poseTimestampMs[streamKey] = ts;
+  return ts;
+}
+
+function getVideoContainBox(videoEl, canvasEl) {
+  const videoWidth = videoEl.videoWidth || canvasEl.width;
+  const videoHeight = videoEl.videoHeight || canvasEl.height;
+  const canvasAspect = canvasEl.width / canvasEl.height;
+  const videoAspect = videoWidth / videoHeight;
+
+  if (!Number.isFinite(videoAspect) || videoAspect <= 0) {
+    return {
+      x: 0,
+      y: 0,
+      width: canvasEl.width,
+      height: canvasEl.height
+    };
+  }
+
+  if (videoAspect > canvasAspect) {
+    const width = canvasEl.width;
+    const height = width / videoAspect;
+    return {
+      x: 0,
+      y: (canvasEl.height - height) / 2,
+      width,
+      height
+    };
+  }
+
+  const height = canvasEl.height;
+  const width = height * videoAspect;
+  return {
+    x: (canvasEl.width - width) / 2,
+    y: 0,
+    width,
+    height
+  };
+}
+
+function drawPose(videoEl, canvasEl, landmarks) {
   const ctx = canvasEl.getContext("2d");
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
   if (!landmarks) {
     return;
   }
+  const box = getVideoContainBox(videoEl, canvasEl);
+  const mapX = (x) => box.x + x * box.width;
+  const mapY = (y) => box.y + y * box.height;
 
   ctx.lineWidth = 2;
   ctx.strokeStyle = "rgba(77, 215, 255, 0.92)";
@@ -978,8 +1057,8 @@ function drawPose(canvasEl, landmarks) {
       continue;
     }
     ctx.beginPath();
-    ctx.moveTo(a.x * canvasEl.width, a.y * canvasEl.height);
-    ctx.lineTo(b.x * canvasEl.width, b.y * canvasEl.height);
+    ctx.moveTo(mapX(a.x), mapY(a.y));
+    ctx.lineTo(mapX(b.x), mapY(b.y));
     ctx.stroke();
   }
 
@@ -989,13 +1068,13 @@ function drawPose(canvasEl, landmarks) {
     }
     ctx.fillStyle = "rgba(253, 180, 75, 0.94)";
     ctx.beginPath();
-    ctx.arc(point.x * canvasEl.width, point.y * canvasEl.height, 3.4, 0, Math.PI * 2);
+    ctx.arc(mapX(point.x), mapY(point.y), 3.4, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
 function isVisible(point) {
-  return (point.visibility ?? 1) > 0.38;
+  return (point.visibility ?? 1) > MIN_LANDMARK_VISIBILITY;
 }
 
 function landmarkCoverage(landmarks, indexes = [11, 12, 23, 24, 25, 26, 27, 28]) {
