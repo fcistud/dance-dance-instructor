@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHand
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import { drawSkeleton, smoothLandmarks, resetSmoothing, isPoseValid } from '../utils/skeletonRenderer';
 
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task';
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 
 /**
@@ -14,6 +14,7 @@ const UserVideo = forwardRef(function UserVideo({
     isActive,
     segmentScores,
     speed,
+    mirrored,
     coachMuted,
     onToggleCoachMute,
     onCoachVolumeDown,
@@ -46,26 +47,14 @@ const UserVideo = forwardRef(function UserVideo({
             try {
                 setLoading(true);
                 const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-                let landmarker = null;
-                try {
-                    landmarker = await PoseLandmarker.createFromOptions(vision, {
-                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-                        runningMode: 'VIDEO',
-                        numPoses: 1,
-                        minPoseDetectionConfidence: 0.6,
-                        minPosePresenceConfidence: 0.6,
-                        minTrackingConfidence: 0.6
-                    });
-                } catch {
-                    landmarker = await PoseLandmarker.createFromOptions(vision, {
-                        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
-                        runningMode: 'VIDEO',
-                        numPoses: 1,
-                        minPoseDetectionConfidence: 0.6,
-                        minPosePresenceConfidence: 0.6,
-                        minTrackingConfidence: 0.6
-                    });
-                }
+                const landmarker = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+                    runningMode: 'VIDEO',
+                    numPoses: 1,
+                    minPoseDetectionConfidence: 0.5,
+                    minPosePresenceConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
                 landmarkerRef.current = landmarker;
                 setLoading(false);
             } catch (err) {
@@ -174,10 +163,12 @@ const UserVideo = forwardRef(function UserVideo({
         };
     }, [loading, detectPose]);
 
+    const mirrorStyle = mirrored ? { transform: 'scaleX(-1)' } : {};
+
     return (
         <div className="video-panel" id="user-video">
-            <video ref={videoRef} playsInline muted style={{ background: '#000' }} />
-            <canvas ref={canvasRef} />
+            <video ref={videoRef} playsInline muted style={{ background: '#000', ...mirrorStyle }} />
+            <canvas ref={canvasRef} style={mirrorStyle} />
 
             <span className="panel-label user">🎥 Your Video</span>
             <div className="panel-audio">

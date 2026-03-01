@@ -5,6 +5,7 @@ import UserVideo from './components/UserVideo';
 import ScoreDisplay from './components/ScoreDisplay';
 import SessionSummary from './components/SessionSummary';
 import { comparePoses } from './utils/poseSimilarity';
+import { mirrorPose } from './utils/poseNormalizer';
 import {
     generateVoiceCue,
     setAudioCoachEnabled,
@@ -36,7 +37,6 @@ export default function App() {
     const [comparison, setComparison] = useState(null);
     const [sessionData, setSessionData] = useState([]);
     const [sessionTime, setSessionTime] = useState(0);
-    const [voiceCoach, setVoiceCoach] = useState(true);
     const [coachMuted, setCoachMuted] = useState(false);
     const [coachVolume, setCoachVolume] = useState(0.7);
     const [referenceMuted, setReferenceMuted] = useState(false);
@@ -69,8 +69,8 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        setAudioCoachEnabled(voiceCoach && !coachMuted);
-    }, [voiceCoach, coachMuted]);
+        setAudioCoachEnabled(!coachMuted);
+    }, [coachMuted]);
 
     useEffect(() => {
         setAudioCoachVolume(coachMuted ? 0 : coachVolume);
@@ -167,11 +167,12 @@ export default function App() {
 
             if (!refPose || !userPose) return;
 
-            const result = comparePoses(refPose, userPose);
+            const userPoseForComparison = mirrored ? mirrorPose(userPose) : userPose;
+            const result = comparePoses(refPose, userPoseForComparison);
             if (!result) return;
 
             setComparison(result);
-            generateVoiceCue(result, refPose, userPose);
+            generateVoiceCue(result, refPose, userPoseForComparison);
 
             sampleCountRef.current += 1;
             if (sampleCountRef.current % 5 !== 0) return;
@@ -179,7 +180,7 @@ export default function App() {
             const frame = {
                 ...result,
                 refLandmarks: refPose,
-                userLandmarks: userPose,
+                userLandmarks: userPoseForComparison,
             };
 
             setSessionData((prev) => {
@@ -195,7 +196,7 @@ export default function App() {
             setXp((prev) => prev + gain);
             setCombo((prev) => (result.overall >= 68 ? prev + 1 : 0));
         }, 120);
-    }, [clearSessionLoops, inputMode, userVideoFile, videoFile]);
+    }, [clearSessionLoops, inputMode, mirrored, userVideoFile, videoFile]);
 
     const handleStop = useCallback(async () => {
         if (stoppingRef.current) return;
@@ -245,14 +246,6 @@ export default function App() {
     const startDisabled = !videoFile || (inputMode === 'video' && !userVideoFile);
     const baseUrl = import.meta.env.BASE_URL || '/';
 
-    const toggleCoachVoice = () => {
-        if (coachMuted) {
-            setCoachMuted(false);
-            return;
-        }
-        setVoiceCoach((prev) => !prev);
-    };
-
     return (
         <div className="app">
             <header className="app-header">
@@ -301,7 +294,7 @@ export default function App() {
                                 isActive={isActive}
                                 segmentScores={comparison?.segments}
                                 mirrored={mirrored}
-                                coachMuted={coachMuted || !voiceCoach}
+                                coachMuted={coachMuted}
                                 onToggleCoachMute={() => setCoachMuted((m) => !m)}
                                 onCoachVolumeDown={() => setCoachVolume((v) => clampVolume(v - 0.1))}
                                 onCoachVolumeUp={() => setCoachVolume((v) => clampVolume(v + 0.1))}
@@ -313,7 +306,8 @@ export default function App() {
                                 isActive={isActive}
                                 segmentScores={comparison?.segments}
                                 speed={speed}
-                                coachMuted={coachMuted || !voiceCoach}
+                                mirrored={mirrored}
+                                coachMuted={coachMuted}
                                 onToggleCoachMute={() => setCoachMuted((m) => !m)}
                                 onCoachVolumeDown={() => setCoachVolume((v) => clampVolume(v - 0.1))}
                                 onCoachVolumeUp={() => setCoachVolume((v) => clampVolume(v + 0.1))}
@@ -397,14 +391,6 @@ export default function App() {
                                 onClick={() => setMirrored((m) => !m)}
                             >
                                 🪞 Mirror
-                            </button>
-
-                            <button
-                                className={`toggle-btn ${(voiceCoach && !coachMuted) ? 'active' : ''}`}
-                                onClick={toggleCoachVoice}
-                                title="Toggle voice coach"
-                            >
-                                {(voiceCoach && !coachMuted) ? '🎙 Coach' : '🎙 Muted'}
                             </button>
                         </div>
 

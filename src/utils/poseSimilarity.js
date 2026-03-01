@@ -110,7 +110,7 @@ export function comparePoses(refLandmarks, userLandmarks) {
 
     for (const [name, seg] of Object.entries(BODY_SEGMENTS)) {
         const vis = Math.min(minVis(refN, seg.joints), minVis(userN, seg.joints));
-        if (vis < 0.45) { segmentScores[name] = null; continue; }
+        if (vis < 0.3) { segmentScores[name] = null; continue; }
 
         let score;
 

@@ -450,7 +450,7 @@ export default function SessionSummary({ sessionData, onClose, recordingUrl, vid
                             onClick={() => setShowKeyInput(v => !v)}
                             style={{ padding: '6px 12px', fontSize: '12px' }}
                         >
-                            {showKeyInput ? 'Hide Settings' : hasPersonalKey ? 'Edit Keys' : 'Connection Settings'}
+                            {showKeyInput ? 'Hide Settings' : hasPersonalKey ? 'Edit Personal Key' : 'Connection Settings'}
                         </button>
                         <button
                             className="btn btn-primary"

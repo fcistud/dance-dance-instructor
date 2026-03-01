@@ -35,15 +35,15 @@ function buildBackendCandidates(backendOverride) {
         candidates.push('/api/feedback');
     }
 
+    // Same-origin API should be first on hosts that support server routes (e.g. Vercel).
+    if (!import.meta.env.DEV && !isGitHubPages()) {
+        candidates.push('/api/feedback');
+    }
+
     for (const base of [override, stored, configured]) {
         if (!base) continue;
         candidates.push(`${base}/api/feedback`);
         candidates.push(`${base}/feedback`);
-    }
-
-    // Same-origin API works on fullstack hosts (e.g. Vercel), but not on GitHub Pages.
-    if (!import.meta.env.DEV && !isGitHubPages()) {
-        candidates.push('/api/feedback');
     }
 
     return unique(candidates);
@@ -99,6 +99,7 @@ async function callBackend(sessionAnalysis, apiKey, sessionFrames, backendOverri
             if (!response.ok) {
                 const errText = await response.text();
                 const detail = parseErrorDetail(errText);
+                const detailLower = detail.toLowerCase();
 
                 if (response.status === 400 && /no api key/i.test(detail)) {
                     return {
@@ -107,8 +108,21 @@ async function callBackend(sessionAnalysis, apiKey, sessionFrames, backendOverri
                     };
                 }
 
+                if (
+                    /deployment_not_found/i.test(detailLower) ||
+                    /this deployment cannot be found/i.test(detailLower)
+                ) {
+                    lastError = `Configured backend URL is dead at ${endpoint}. Update it in Connection Settings.`;
+                    continue;
+                }
+
                 if (response.status === 405 && endpoint.startsWith('/api') && isGitHubPages()) {
                     lastError = 'Backend request failed (405). GitHub Pages is static-only. Set a deployed backend URL.';
+                    continue;
+                }
+
+                if (response.status === 404) {
+                    lastError = `Backend route not found at ${endpoint}. Verify backend deployment and route mapping.`;
                     continue;
                 }
 
