@@ -10,6 +10,10 @@ Improve.ai uses:
 - Vercel (frontend + backend): `https://monaco-nine-theta.vercel.app`
 - GitHub Pages (frontend): `https://fcistud.github.io/dance-dance-instructor/`
 
+## Practice screen
+
+![Improve.ai practice screen](docs/screenshots/practice-screen.png)
+
 ## Run locally (fast path)
 
 Start everything (frontend + backend) in one command:
