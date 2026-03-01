@@ -1,0 +1,73 @@
+name: Deploy Backend to Vercel
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - backend/**
+      - api/**
+      - vercel.json
+      - requirements.txt
+      - .github/workflows/deploy-backend-vercel.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-backend
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      NEMOTRON_API_KEY: ${{ secrets.VITE_NEMOTRON_API_KEY }}
+      ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate required secrets
+        run: |
+          test -n "${VERCEL_TOKEN}" || (echo "Missing secret: VERCEL_TOKEN" && exit 1)
+          test -n "${VERCEL_ORG_ID}" || (echo "Missing secret: VERCEL_ORG_ID" && exit 1)
+          test -n "${VERCEL_PROJECT_ID}" || (echo "Missing secret: VERCEL_PROJECT_ID" && exit 1)
+          test -n "${NEMOTRON_API_KEY}" || (echo "Missing secret: VITE_NEMOTRON_API_KEY" && exit 1)
+
+      - name: Pull Vercel project settings
+        run: npx vercel@latest pull --yes --environment=production --token="${VERCEL_TOKEN}"
+
+      - name: Deploy production build to Vercel
+        id: deploy
+        run: |
+          set -euo pipefail
+          ORIGINS="${ALLOWED_ORIGINS:-https://fcistud.github.io,http://localhost:5174,http://localhost:5173,http://localhost:3000}"
+          OUT="$(npx vercel@latest deploy --prod --yes --token="${VERCEL_TOKEN}" \
+            --env VITE_NEMOTRON_API_KEY="${NEMOTRON_API_KEY}" \
+            --env ALLOWED_ORIGINS="${ORIGINS}" 2>&1)"
+          echo "${OUT}"
+          URL="$(echo "${OUT}" | grep -Eo 'https://[a-zA-Z0-9.-]+\.vercel\.app' | tail -n 1 || true)"
+          if [ -z "${URL}" ]; then
+            echo "Could not determine Vercel URL from deploy output." >&2
+            exit 1
+          fi
+          echo "url=${URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deployment summary
+        run: |
+          {
+            echo "### Backend deployed"
+            echo ""
+            echo "- URL: ${{ steps.deploy.outputs.url }}"
+            echo "- Set secret \`VITE_API_BASE_URL\` to this URL for GitHub Pages frontend builds."
+          } >> "${GITHUB_STEP_SUMMARY}"

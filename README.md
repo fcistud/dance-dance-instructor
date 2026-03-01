@@ -52,8 +52,22 @@ Set env vars in Vercel project settings:
 
 Workflow: `.github/workflows/deploy.yml`.
 
-Set repository variable:
-- `VITE_API_BASE_URL` pointing to your deployed backend URL (if not using same-origin backend)
+Set repository secret:
+- `VITE_API_BASE_URL` pointing to your deployed backend URL (for example `https://your-backend.vercel.app`)
+
+## GitHub Secrets only setup (recommended)
+
+This repo supports a secrets-only setup with no manual URL entry in the UI:
+
+1. Add these repository secrets:
+   - `VERCEL_TOKEN`
+   - `VERCEL_ORG_ID`
+   - `VERCEL_PROJECT_ID`
+   - `VITE_NEMOTRON_API_KEY`
+   - `VITE_API_BASE_URL` (set this to your stable Vercel production URL, e.g. `https://your-project.vercel.app`)
+   - Optional: `ALLOWED_ORIGINS` (comma-separated CORS origins)
+2. Run workflow: `.github/workflows/deploy-backend-vercel.yml`
+3. Push to `main` (or rerun) so `.github/workflows/deploy.yml` rebuilds Pages with `VITE_API_BASE_URL` from secrets.
 
 ## Notes
 
