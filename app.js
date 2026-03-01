@@ -133,6 +133,7 @@ const el = {
   leaderboardStatus: document.getElementById("leaderboardStatus"),
   leaderboardList: document.getElementById("leaderboardList"),
   leaderboardScope: document.getElementById("leaderboardScope"),
+  leaderboardShell: document.getElementById("leaderboardShell"),
   newSessionBtn: document.getElementById("newSessionBtn")
 };
 
@@ -270,6 +271,7 @@ function bindEvents() {
   el.leaderboardName.addEventListener("change", persistLeaderboardName);
   el.newSessionBtn?.addEventListener("click", () => {
     document.body.classList.remove("session-ended");
+    el.leaderboardShell?.classList.add("hidden");
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
@@ -849,6 +851,7 @@ async function startSession() {
   el.endBtn.disabled = false;
   el.analyticsSection.classList.add("hidden");
   document.body.classList.remove("session-ended");
+  el.leaderboardShell?.classList.add("hidden");
   el.sessionSummary.textContent = "Session in progress";
 
   el.targetVideo.currentTime = 0;
@@ -916,6 +919,7 @@ function resetSessionData() {
   }
   el.submitScoreBtn.disabled = true;
   el.leaderboardStatus.textContent = "Session in progress. Finish to submit your score.";
+  el.leaderboardShell?.classList.add("hidden");
   updateGamificationHud();
 }
 
@@ -2180,6 +2184,7 @@ function logCoach(message, urgent) {
 function finalizeAnalytics(reason) {
   el.analyticsSection.classList.remove("hidden");
   document.body.classList.add("session-ended");
+  el.leaderboardShell?.classList.remove("hidden");
 
   if (!state.history.length) {
     el.sessionSummary.textContent = "No tracked movement detected";

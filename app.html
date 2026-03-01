@@ -12,41 +12,30 @@
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="practice-screen">
     <div class="background-glow"></div>
     <main class="app-shell">
-      <div class="app-topbar">
-        <a class="btn-ghost small" href="index.html">Back to landing</a>
-      </div>
-      <header class="hero">
-        <div class="hero-main">
-          <p class="eyebrow">Coach Studio</p>
-          <h1>Session Control</h1>
-          <p class="subtitle">
-            Run your side-by-side dance session, track accuracy, and generate
-            instructor-style feedback.
-          </p>
-          <div class="hero-pills">
-            <span>Real-time pose tracking</span>
-            <span>Nemotron coaching report</span>
-            <span>Synced replay analysis</span>
-          </div>
-        </div>
-        <div class="hero-stats">
-          <article class="hud-card xp-card">
-            <p>XP</p>
-            <h3 id="xpValue" class="hud-value">0</h3>
-            <small id="xpMeta">Session momentum</small>
-            <div class="hud-meter"><span id="xpMeter"></span></div>
-          </article>
-          <article class="hud-card combo-card">
-            <p>Combo</p>
-            <h3 id="comboValue" class="hud-value">x0</h3>
-            <small>Streak builder</small>
-            <div class="hud-meter"><span id="comboMeter"></span></div>
-          </article>
+      <header class="practice-nav">
+        <h1 class="practice-brand">Improved.ai</h1>
+        <div class="practice-nav-actions">
+          <a class="pill-link" href="index.html">Home</a>
+          <a class="pill-link active" href="app.html">Practice</a>
         </div>
       </header>
+      <section class="practice-hud session-live-block">
+        <article class="hud-card xp-card">
+          <p>XP</p>
+          <h3 id="xpValue" class="hud-value">0</h3>
+          <small id="xpMeta">Session momentum</small>
+          <div class="hud-meter"><span id="xpMeter"></span></div>
+        </article>
+        <article class="hud-card combo-card">
+          <p>Combo</p>
+          <h3 id="comboValue" class="hud-value">x0</h3>
+          <small>Streak builder</small>
+          <div class="hud-meter"><span id="comboMeter"></span></div>
+        </article>
+      </section>
 
       <section class="panel-grid inputs-grid session-live-block">
         <article class="panel video-panel">
@@ -85,53 +74,14 @@
           </div>
         </article>
 
-        <article class="panel video-panel">
+        <article class="panel video-panel hidden-media-panel">
           <div class="panel-head">
             <h2>You</h2>
             <span class="status-chip" id="userStatus">Choose input</span>
           </div>
-          <div class="controls-row user-controls">
-            <label>
-              Input
-              <select id="userSourceSelect">
-                <option value="webcam" selected>Webcam</option>
-                <option value="upload">Upload video</option>
-              </select>
-            </label>
-            <label class="file-picker hidden" id="userUploadWrap">
-              <span>Upload Practice Video</span>
-              <input id="userInput" type="file" accept="video/*" />
-            </label>
-            <label class="toggle">
-              <input id="mirrorMode" type="checkbox" checked />
-              <span>Mirror mode</span>
-            </label>
-            <label>
-              Voice style
-              <select id="voiceMode">
-                <option value="calm" selected>Calm coach</option>
-                <option value="active">Active coach</option>
-                <option value="hype">Hype coach</option>
-              </select>
-            </label>
-          </div>
           <div class="stage" id="userStage">
             <video id="userVideo" playsinline preload="metadata" muted></video>
             <canvas id="userCanvas"></canvas>
-            <div class="mini-audio coach-mini" aria-label="Coach voice controls">
-              <button id="coachEnableBtn" class="icon-audio" type="button" title="Enable or disable coach voice">
-                🎙
-              </button>
-              <button id="coachMuteBtn" class="icon-audio" type="button" title="Mute or unmute coach voice">
-                🔈
-              </button>
-              <button id="coachVolDownBtn" class="icon-audio" type="button" title="Coach volume down">
-                -
-              </button>
-              <button id="coachVolUpBtn" class="icon-audio" type="button" title="Coach volume up">
-                +
-              </button>
-            </div>
           </div>
         </article>
       </section>
@@ -160,9 +110,48 @@
             <h3 id="sessionTime">00:00</h3>
           </div>
         </div>
+        <div class="controls-row practice-toolbar">
+          <label>
+            Input
+            <select id="userSourceSelect">
+              <option value="webcam" selected>Webcam</option>
+              <option value="upload">Upload video</option>
+            </select>
+          </label>
+          <label class="file-picker hidden" id="userUploadWrap">
+            <span>Upload Practice Video</span>
+            <input id="userInput" type="file" accept="video/*" />
+          </label>
+          <label>
+            Voice style
+            <select id="voiceMode">
+              <option value="calm" selected>Calm coach</option>
+              <option value="active">Active coach</option>
+              <option value="hype">Hype coach</option>
+            </select>
+          </label>
+          <label class="toggle">
+            <input id="mirrorMode" type="checkbox" checked />
+            <span>Mirror</span>
+          </label>
+          <div class="mini-audio coach-mini-inline" aria-label="Coach voice controls">
+            <button id="coachEnableBtn" class="icon-audio" type="button" title="Enable or disable coach voice">
+              🎙
+            </button>
+            <button id="coachMuteBtn" class="icon-audio" type="button" title="Mute or unmute coach voice">
+              🔈
+            </button>
+            <button id="coachVolDownBtn" class="icon-audio" type="button" title="Coach volume down">
+              -
+            </button>
+            <button id="coachVolUpBtn" class="icon-audio" type="button" title="Coach volume up">
+              +
+            </button>
+          </div>
+        </div>
       </section>
 
-      <section class="panel leaderboard-shell">
+      <section class="panel leaderboard-shell hidden" id="leaderboardShell">
         <article class="leaderboard-panel">
           <div class="panel-head">
             <h3>Leaderboard</h3>
