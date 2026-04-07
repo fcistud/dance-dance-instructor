@@ -1,10 +1,3 @@
-# Improve.ai
-
-Improve.ai uses:
-- A custom landing page at `/` (current design in `index.html` + `landing.css` + `landing.js`)
-- The restored `dance-coach-ai-restored` app as the working dance studio at `/app.html` (React + Vite)
-- A Python FastAPI backend with PoseScript-style analysis and Nemotron feedback
-
 ## Live links
 
 - Vercel (frontend + backend): `https://monaco-nine-theta.vercel.app`
@@ -95,8 +88,3 @@ This repo supports a secrets-only setup with no manual URL entry in the UI:
    - Optional: `ALLOWED_ORIGINS` (comma-separated CORS origins)
 2. Run workflow: `.github/workflows/deploy-backend-vercel.yml`
 3. Push to `main` (or rerun) so `.github/workflows/deploy.yml` rebuilds Pages with `VITE_API_BASE_URL` from secrets.
-
-## Notes
-
-- Backend exposes both prefixed and non-prefixed routes (`/feedback` and `/api/feedback`) for compatibility across hosts.
-- PoseScript-style feedback generation is implemented in `backend/pose_descriptor.py` and combined with Nemotron in `backend/server.py`.
