@@ -1,10 +1,3 @@
-## Live links
-
-- Vercel (frontend + backend): `https://monaco-nine-theta.vercel.app`
-- GitHub Pages (frontend): `https://fcistud.github.io/dance-dance-instructor/`
-
-## Practice screen
-
 ![Improve.ai Landing Page](docs/screenshots/practice-screen.png)
 
 ## Run locally (fast path)
